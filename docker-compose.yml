@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: vector-graph-qdrant
+    ports:
+      - "6333:6333"  # HTTP API
+      - "6334:6334"  # gRPC API
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    restart: unless-stopped
+    networks:
+      - vector-graph-network
+
+  janusgraph:
+    image: janusgraph/janusgraph:latest
+    container_name: vector-graph-janusgraph
+    ports:
+      - "8182:8182"  # Gremlin Server
+    volumes:
+      - janusgraph_storage:/var/lib/janusgraph
+    environment:
+      - JANUS_PROPS_TEMPLATE=berkeleyje-lucene
+      - janusgraph.storage.backend=berkeleyje
+      - janusgraph.storage.directory=/var/lib/janusgraph/data
+      - janusgraph.index.search.backend=lucene
+      - janusgraph.index.search.directory=/var/lib/janusgraph/index
+    restart: unless-stopped
+    networks:
+      - vector-graph-network
+
+volumes:
+  qdrant_storage:
+    driver: local
+  janusgraph_storage:
+    driver: local
+
+networks:
+  vector-graph-network:
+    driver: bridge

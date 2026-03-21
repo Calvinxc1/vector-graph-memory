@@ -58,6 +58,46 @@ The system leverages the strengths of both database paradigms:
 - Multi-agent memory sharing
 - Optional service wrapper (REST/GraphQL API)
 
+## Development Setup
+
+### Prerequisites
+
+- Docker and Docker Compose
+- Python 3.14+
+- uv (Python package manager)
+
+### Database Setup
+
+Start the required databases using Docker Compose:
+
+```bash
+docker compose up -d
+```
+
+This will start:
+- **Qdrant** on ports 6333 (HTTP) and 6334 (gRPC)
+- **JanusGraph** on port 8182 (Gremlin Server)
+
+To stop the databases:
+
+```bash
+docker compose down
+```
+
+To remove all data volumes:
+
+```bash
+docker compose down -v
+```
+
+### Environment Configuration
+
+Copy the example environment file and configure as needed:
+
+```bash
+cp .env.example .env
+```
+
 ## Status
 
 **Current Phase:** Planning and design
