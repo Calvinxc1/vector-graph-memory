@@ -1,0 +1,115 @@
+name: CD
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+  push:
+    branches:
+      - main
+
+jobs:
+  check-branch:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    outputs:
+      is_release_or_hotfix: ${{ steps.check.outputs.is_release_or_hotfix }}
+    steps:
+      - name: Check if PR is from release or hotfix branch
+        id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            SOURCE_BRANCH="${{ github.head_ref }}"
+          else
+            # For push events, check the commit message or use a different strategy
+            # This assumes the branch name is preserved in merge commits
+            SOURCE_BRANCH="${{ github.ref_name }}"
+          fi
+
+          if [[ "$SOURCE_BRANCH" == release/* ]] || [[ "$SOURCE_BRANCH" == hotfix/* ]]; then
+            echo "is_release_or_hotfix=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_release_or_hotfix=false" >> $GITHUB_OUTPUT
+          fi
+
+  dry-run:
+    needs: check-branch
+    if: github.event_name == 'pull_request' && needs.check-branch.outputs.is_release_or_hotfix == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: |
+          uv sync
+
+      - name: Build package
+        run: |
+          uv build
+
+      - name: Check package metadata
+        run: |
+          uv run twine check dist/*
+
+      - name: Dry-run publish
+        run: |
+          echo "Dry-run: Would publish to PyPI"
+          ls -lh dist/
+
+  publish:
+    needs: check-branch
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check-branch.outputs.is_release_or_hotfix == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: |
+          uv sync
+
+      - name: Build package
+        run: |
+          uv build
+
+      - name: Get version from pyproject.toml
+        id: get_version
+        run: |
+          VERSION=$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          name: Release v${{ steps.get_version.outputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
