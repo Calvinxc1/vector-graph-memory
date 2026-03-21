@@ -1,22 +1,29 @@
 # Model Selection Guide
 
-This guide explains how to configure LLM and embedding models for Vector Graph Memory.
+This guide explains how to choose LLM and embedding models for Vector Graph Memory.
 
 ## Quick Start
 
-Configure models via environment variables in `.env`:
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models import infer_model
+from vector_graph_memory import VectorGraphMemory
 
-```bash
-# LLM Model for the agent
-LLM_MODEL=openai:gpt-4
+# Choose your LLM for the agent
+agent = Agent('openai:gpt-4', deps_type=DatabaseContext)
 
-# Embedding Model for vectorization
-EMBEDDING_MODEL=openai:text-embedding-3-small
+# Choose your embedding model for memory
+embedding_model = infer_model('openai:text-embedding-3-small')
+memory = VectorGraphMemory(
+    qdrant_client=qdrant,
+    janus_client=janus,
+    embedding_model=embedding_model
+)
 ```
 
 ## LLM Models
 
-Vector Graph Memory uses PydanticAI's agent system, which supports multiple LLM providers.
+The LLM model is passed directly to `Agent()` from PydanticAI. This is the model that powers your AI agent's reasoning and tool use.
 
 ### Supported Providers
 
@@ -31,20 +38,20 @@ Vector Graph Memory uses PydanticAI's agent system, which supports multiple LLM 
 
 ### Examples
 
-```bash
+```python
 # Use OpenAI GPT-4
-LLM_MODEL=openai:gpt-4
+agent = Agent('openai:gpt-4')
 
 # Use Anthropic Claude
-LLM_MODEL=anthropic:claude-3-5-sonnet-20241022
+agent = Agent('anthropic:claude-3-5-sonnet-20241022')
 
 # Use local Ollama model
-LLM_MODEL=ollama:llama3
+agent = Agent('ollama:llama3')
 ```
 
 ## Embedding Models
 
-Embedding models are used to convert text into vector representations for semantic search.
+The embedding model is passed to `VectorGraphMemory()` to convert text into vectors for semantic search.
 
 ### Supported Providers
 
@@ -71,15 +78,55 @@ Embedding models are used to convert text into vector representations for semant
 
 ### Examples
 
-```bash
+```python
+from pydantic_ai.models import infer_model
+
 # Use OpenAI small embedding model (recommended for most use cases)
-EMBEDDING_MODEL=openai:text-embedding-3-small
+embedding_model = infer_model('openai:text-embedding-3-small')
 
 # Use Google's embedding model
-EMBEDDING_MODEL=google-gla:text-embedding-004
+embedding_model = infer_model('google-gla:text-embedding-004')
 
 # Use Cohere for multilingual support
-EMBEDDING_MODEL=cohere:embed-multilingual-v3.0
+embedding_model = infer_model('cohere:embed-multilingual-v3.0')
+
+# Pass to VectorGraphMemory
+memory = VectorGraphMemory(
+    qdrant_client=qdrant,
+    janus_client=janus,
+    embedding_model=embedding_model
+)
+```
+
+## Complete Example
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models import infer_model
+from qdrant_client import QdrantClient
+from gremlin_python.driver import client as gremlin_client
+from vector_graph_memory import VectorGraphMemory
+
+# Connect to databases
+qdrant = QdrantClient(host='localhost', port=6333)
+janus = gremlin_client.Client('ws://localhost:8182/gremlin', 'g')
+
+# Choose embedding model
+embedding_model = infer_model('openai:text-embedding-3-small')
+
+# Initialize memory system
+memory = VectorGraphMemory(
+    qdrant_client=qdrant,
+    janus_client=janus,
+    embedding_model=embedding_model,
+    collection_name="my_memory"
+)
+
+# Create agent with chosen LLM
+agent = Agent('anthropic:claude-3-5-sonnet-20241022')
+
+# Use different providers for LLM vs embeddings!
+# For example: Claude for reasoning + OpenAI for embeddings
 ```
 
 ## API Keys
@@ -87,39 +134,26 @@ EMBEDDING_MODEL=cohere:embed-multilingual-v3.0
 Set API keys as environment variables:
 
 ```bash
-# OpenAI
-OPENAI_API_KEY=your-api-key
-
-# Anthropic
-ANTHROPIC_API_KEY=your-api-key
-
-# Google (Gemini)
-GOOGLE_API_KEY=your-api-key
-
-# Cohere
-COHERE_API_KEY=your-api-key
-
-# VoyageAI
-VOYAGEAI_API_KEY=your-api-key
+export OPENAI_API_KEY=your-api-key
+export ANTHROPIC_API_KEY=your-api-key
+export GOOGLE_API_KEY=your-api-key
+export COHERE_API_KEY=your-api-key
+export VOYAGEAI_API_KEY=your-api-key
 ```
 
-## Complete Example
+Or in a `.env` file:
 
 ```bash
-# .env file example
-LLM_MODEL=anthropic:claude-3-5-sonnet-20241022
-EMBEDDING_MODEL=openai:text-embedding-3-small
-
-ANTHROPIC_API_KEY=your-anthropic-key
-OPENAI_API_KEY=your-openai-key
+OPENAI_API_KEY=your-api-key
+ANTHROPIC_API_KEY=your-api-key
 ```
 
-## Notes
+## Key Design Principles
 
-- **LLM and embedding models can use different providers** - For example, you can use Claude for the agent and OpenAI for embeddings
-- **Model strings follow PydanticAI's format** - See [PydanticAI documentation](https://ai.pydantic.dev/models/overview/) for details
-- **Embedding dimensions are detected automatically** - The system will create Qdrant collections with the correct vector size
-- **Local models via Ollama** - You can use local models for both LLM and embeddings to avoid API costs
+1. **Models are API parameters, not configuration** - Pass model strings directly to `Agent()` and `infer_model()`
+2. **Mix and match providers** - Use different providers for LLM vs embeddings (e.g., Claude + OpenAI)
+3. **Drop-in replacement** - Change model strings to switch providers without code changes
+4. **PydanticAI native** - Leverages PydanticAI's built-in model support
 
 ## Further Reading
 
