@@ -3,10 +3,9 @@
 import uuid
 from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, ScoredPoint
+from qdrant_client.models import Distance, VectorParams, PointStruct
 from gremlin_python.driver import client as gremlin_client
-
-from .embeddings import EmbeddingProvider
+from pydantic_ai.models import EmbeddingModel
 
 
 class VectorGraphMemory:
@@ -16,7 +15,7 @@ class VectorGraphMemory:
         self,
         qdrant_client: QdrantClient,
         janus_client: gremlin_client.Client,
-        embedding_provider: EmbeddingProvider,
+        embedding_model: EmbeddingModel,
         collection_name: str = "memory",
     ):
         """Initialize vector-graph memory system.
@@ -24,12 +23,12 @@ class VectorGraphMemory:
         Args:
             qdrant_client: Qdrant client instance
             janus_client: JanusGraph Gremlin client instance
-            embedding_provider: Embedding provider for vectorization
+            embedding_model: PydanticAI EmbeddingModel instance
             collection_name: Name of the Qdrant collection
         """
         self.qdrant = qdrant_client
         self.janus = janus_client
-        self.embeddings = embedding_provider
+        self.embedding_model = embedding_model
         self.collection_name = collection_name
 
         self._ensure_collection()
@@ -38,10 +37,15 @@ class VectorGraphMemory:
         """Ensure the Qdrant collection exists."""
         collections = self.qdrant.get_collections().collections
         if not any(c.name == self.collection_name for c in collections):
+            # Get embedding dimension from a test embedding
+            import asyncio
+            test_result = asyncio.run(self.embedding_model.embed(["test"]))
+            embedding_dim = len(test_result.embeddings[0])
+
             self.qdrant.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(
-                    size=self.embeddings.dimension,
+                    size=embedding_dim,
                     distance=Distance.COSINE
                 )
             )
@@ -65,8 +69,9 @@ class VectorGraphMemory:
         entity_id = str(uuid.uuid4())
         metadata = metadata or {}
 
-        # Generate embedding
-        embedding = await self.embeddings.embed(content)
+        # Generate embedding using PydanticAI
+        embedding_result = await self.embedding_model.embed([content])
+        embedding = embedding_result.embeddings[0]
 
         # Store in Qdrant
         self.qdrant.upsert(
@@ -117,8 +122,9 @@ class VectorGraphMemory:
         Returns:
             List of matching entities with scores
         """
-        # Generate query embedding
-        query_embedding = await self.embeddings.embed(query)
+        # Generate query embedding using PydanticAI
+        embedding_result = await self.embedding_model.embed([query])
+        query_embedding = embedding_result.embeddings[0]
 
         # Search in Qdrant
         search_kwargs = {

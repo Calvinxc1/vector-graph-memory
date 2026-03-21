@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
+    "gremlinpython>=3.8.0",
     "pydantic-ai>=1.70.0",
+    "qdrant-client>=1.17.1",
 ]
 
 [dependency-groups]
