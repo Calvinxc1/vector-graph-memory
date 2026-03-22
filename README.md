@@ -12,11 +12,12 @@ A hybrid vector-graph database backend for AI agents, providing long-term persis
 
 ## Architecture
 
-- **Type:** Python library (v1), with potential service wrapper in future versions
-- **Python Version:** 3.14+
+- **Type:** Python library + OpenAI-compatible REST API
+- **Python Version:** 3.11+
 - **Vector Database:** Qdrant (semantic entry point discovery)
 - **Graph Database:** JanusGraph (relationship storage and traversal)
 - **AI Framework:** PydanticAI
+- **API Framework:** FastAPI with OpenAI-compatible endpoints
 
 ## Core Concepts
 
@@ -66,43 +67,109 @@ The system leverages the strengths of both database paradigms:
 - Python 3.14+
 - uv (Python package manager)
 
-### Database Setup
+### Quick Start
 
-Start the required databases using Docker Compose:
-
-```bash
-docker compose up -d
-```
-
-This will start:
-- **Qdrant** on ports 6333 (HTTP) and 6334 (gRPC)
-- **JanusGraph** on port 8182 (Gremlin Server)
-
-To stop the databases:
+**Option 1: Using the API (Recommended)**
 
 ```bash
-docker compose down
-```
-
-To remove all data volumes:
-
-```bash
-docker compose down -v
-```
-
-### Environment Configuration
-
-Copy the example environment file and configure as needed:
-
-```bash
+# 1. Configure environment
 cp .env.example .env
+# Edit .env - at minimum set OPENAI_API_KEY
+
+# 2. Start all services (databases + API)
+docker compose up -d
+
+# 3. Try the API
+curl http://localhost:8000/v1/models
 ```
+
+The API will be available at `http://localhost:8000` with OpenAI-compatible endpoints.
+
+**Option 2: Using the Python Library**
+
+```bash
+# 1. Start databases only
+docker compose up -d qdrant janusgraph
+
+# 2. Install library
+pip install -e .
+
+# 3. Use in Python
+# See playground.ipynb for examples
+```
+
+### Playground Notebooks
+
+Two Jupyter notebooks are provided:
+
+- **`playground_api.ipynb`** - Examples using the REST API (recommended)
+- **`playground.ipynb`** - Examples using the Python library directly
+
+Start Jupyter and open either notebook:
+
+```bash
+jupyter notebook
+```
+
+## Integration with Open WebUI
+
+The Vector Graph Memory API is compatible with Open WebUI and other OpenAI-compatible clients.
+
+### Using the Included Open WebUI Instance
+
+The easiest way to test the API is with the included Open WebUI container:
+
+```bash
+# Start all services including Open WebUI
+docker compose up -d
+
+# Open WebUI will be available at http://localhost:3000
+```
+
+The Open WebUI instance is pre-configured to use the Vector Graph Memory API. Simply:
+
+1. Navigate to `http://localhost:3000` in your browser
+2. Start chatting - the agent has persistent memory capabilities
+3. The agent will propose adding information to memory during conversations
+4. Confirm memory proposals through the API endpoints (see `playground_api.ipynb` for examples)
+
+### Using an External Open WebUI Instance
+
+If you have your own Open WebUI installation:
+
+1. Start the API: `docker compose up -d api`
+2. In Open WebUI, add a new OpenAI API connection:
+   - **Base URL:** `http://localhost:8000/v1` (or `http://api:8000/v1` if on the same Docker network)
+   - **API Key:** (any value - authentication is disabled by default)
+   - **Model:** `vector-graph-memory`
+
+### Configuration
+
+Customize Open WebUI port in `.env`:
+
+```bash
+WEBUI_PORT=3000  # Default port
+```
+
+See [API.md](API.md) for complete API documentation.
 
 ## Status
 
-**Current Phase:** Planning and design
+**Current Version:** v1.0 - Core functionality complete
 
-This project is in active development. The README will be updated as implementation progresses.
+**Features:**
+- ✅ Hybrid vector-graph storage
+- ✅ PydanticAI agent with memory tools
+- ✅ OpenAI-compatible REST API
+- ✅ Docker containerization
+- ✅ Memory proposals and confirmations
+- ✅ Audit logging (JSONL/MongoDB)
+- ✅ Configurable memory triggers
+
+**In Development:**
+- Temporal tracking and recency scoring
+- Memory consolidation
+- Advanced graph traversal patterns
 
 ## License
 
