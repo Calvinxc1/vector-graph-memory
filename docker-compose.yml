@@ -1,12 +1,10 @@
-version: '3.8'
-
 services:
   qdrant:
     image: qdrant/qdrant:${QDRANT_VERSION:-latest}
     container_name: ${QDRANT_CONTAINER_NAME:-vector-graph-qdrant}
-    ports:
-      - "${QDRANT_HTTP_PORT:-6333}:6333"  # HTTP API
-      - "${QDRANT_GRPC_PORT:-6334}:6334"  # gRPC API
+    expose:
+      - "6333"  # HTTP API (internal only)
+      - "6334"  # gRPC API (internal only)
     volumes:
       - qdrant_storage:/qdrant/storage
     environment:
@@ -19,16 +17,89 @@ services:
   janusgraph:
     image: janusgraph/janusgraph:${JANUSGRAPH_VERSION:-latest}
     container_name: ${JANUSGRAPH_CONTAINER_NAME:-vector-graph-janusgraph}
-    ports:
-      - "${JANUSGRAPH_PORT:-8182}:8182"  # Gremlin Server
+    expose:
+      - "8182"  # Gremlin Server (internal only)
     volumes:
       - janusgraph_storage:/var/lib/janusgraph
+      - ./janusgraph-config.properties:/etc/opt/janusgraph/janusgraph.properties:ro
+      - ./janusgraph-init.groovy:/docker-entrypoint-initdb.d/init.groovy:ro
     environment:
       - JANUS_PROPS_TEMPLATE=berkeleyje-lucene
-      - janusgraph.storage.backend=berkeleyje
-      - janusgraph.storage.directory=/var/lib/janusgraph/data
-      - janusgraph.index.search.backend=lucene
-      - janusgraph.index.search.directory=/var/lib/janusgraph/index
+    restart: unless-stopped
+    networks:
+      - vector-graph-network
+
+  mongodb:
+    image: mongo:${MONGODB_VERSION:-7}
+    container_name: ${MONGODB_CONTAINER_NAME:-vector-graph-mongodb}
+    expose:
+      - "27017"  # MongoDB (internal only)
+    volumes:
+      - mongodb_storage:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGODB_USER:-admin}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGODB_PASSWORD:-password}
+    restart: unless-stopped
+    networks:
+      - vector-graph-network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ${API_CONTAINER_NAME:-vector-graph-api}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      # Database connections (use container names)
+      - QDRANT_HOST=qdrant
+      - QDRANT_HTTP_PORT=6333
+      - JANUSGRAPH_HOST=janusgraph
+      - JANUSGRAPH_PORT=8182
+
+      # LLM Configuration
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_MODEL=${LLM_MODEL:-openai:gpt-4o-mini}
+
+      # Memory Configuration
+      - PROJECT_ID=${PROJECT_ID:-default}
+      - MEMORY_USE_CASE=${MEMORY_USE_CASE:-General purpose conversational memory}
+      - MEMORY_THRESHOLD=${MEMORY_THRESHOLD:-Store important facts, decisions, and context from conversations}
+      - SIMILARITY_THRESHOLD=${SIMILARITY_THRESHOLD:-0.85}
+
+      # Trigger Configuration
+      - TRIGGER_MODE=${TRIGGER_MODE:-ai_determined}
+      - TRIGGER_PHRASE=${TRIGGER_PHRASE}
+      - TRIGGER_INTERVAL=${TRIGGER_INTERVAL}
+
+      # System Prompt
+      - SYSTEM_PROMPT=${SYSTEM_PROMPT:-You are a helpful AI assistant with persistent memory capabilities.}
+
+      # Audit Configuration
+      - AUDIT_BACKEND=${AUDIT_BACKEND:-jsonl}
+      - AUDIT_LOG_DIR=/app/logs
+    depends_on:
+      - qdrant
+      - janusgraph
+    restart: unless-stopped
+    networks:
+      - vector-graph-network
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: ${WEBUI_CONTAINER_NAME:-vector-graph-webui}
+    ports:
+      - "${WEBUI_PORT:-3000}:8080"
+    volumes:
+      - open_webui_data:/app/backend/data
+    environment:
+      - OPENAI_API_BASE_URLS=http://api:8000/v1
+      - OPENAI_API_KEYS=${OPENAI_API_KEY}
+      - WEBUI_AUTH=false
+    depends_on:
+      - api
     restart: unless-stopped
     networks:
       - vector-graph-network
@@ -37,6 +108,10 @@ volumes:
   qdrant_storage:
     driver: local
   janusgraph_storage:
+    driver: local
+  mongodb_storage:
+    driver: local
+  open_webui_data:
     driver: local
 
 networks:
