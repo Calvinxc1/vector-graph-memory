@@ -1,12 +1,25 @@
 [project]
 name = "vector-graph-memory"
 version = "0.1.0"
-description = "Add your description here"
+description = "Hybrid vector-graph database backend for AI agents with persistent memory"
 requires-python = ">=3.11"
 dependencies = [
     "gremlinpython>=3.8.0",
+    "nest-asyncio>=1.5.0",
+    "pydantic>=2.0.0",
     "pydantic-ai>=1.70.0",
+    "pymongo>=4.16.0",
     "qdrant-client>=1.17.1",
+]
+
+[project.optional-dependencies]
+mongodb = [
+    "pymongo>=4.6.0",
+]
+api = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [dependency-groups]
@@ -17,3 +30,10 @@ dev = [
     "pytest>=9.0.2",
     "pytest-cov>=7.1.0",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vgm"]
