@@ -1,0 +1,418 @@
+# Vector Graph Memory API
+
+OpenAI-compatible API server for integrating Vector Graph Memory with Open WebUI and other LLM frontends.
+
+## Quick Start
+
+### Option 1: Docker (Recommended)
+
+Run everything with Docker Compose:
+
+```bash
+# 1. Configure environment
+cp .env.example .env
+# Edit .env - at minimum set OPENAI_API_KEY
+
+# 2. Start all services (databases + API)
+docker compose up -d
+
+# 3. Check logs
+docker compose logs -f api
+```
+
+The API will be available at `http://localhost:8000`
+
+**Included services:**
+- Qdrant (vector database)
+- JanusGraph (graph database)
+- MongoDB (optional, for audit logs)
+- API server (FastAPI with memory agent)
+
+**How it works:**
+- All containers run on an internal Docker network (`vector-graph-network`)
+- The API container connects to databases using container names (`qdrant`, `janusgraph`)
+- Only the API port (8000) is exposed to your host machine
+- Database connections are handled automatically - no localhost configuration needed!
+
+### Option 2: Local Development
+
+Run the API locally while databases run in Docker:
+
+```bash
+# 1. Install dependencies
+pip install -e ".[api]"
+
+# 2. Configure environment
+cp .env.example .env
+# Edit .env with your settings
+
+# 3. Start only databases
+docker compose up -d qdrant janusgraph
+
+# 4. Start API locally
+./start_api.sh
+```
+
+The API will be available at `http://localhost:8000`
+
+## Open WebUI Integration
+
+### Add as External Connection
+
+1. Open your Open WebUI instance
+2. Go to **Settings** → **Connections**
+3. Add a new **OpenAI API** connection:
+   - **Name**: Vector Graph Memory
+   - **Base URL**: `http://localhost:8000/v1`
+   - **API Key**: (any value, not validated)
+4. Save and select the "vector-graph-memory" model
+
+### Usage
+
+Simply chat with the agent through Open WebUI. The agent will:
+
+- Automatically search memory for relevant context
+- Propose storing important information
+- Track conversations in audit logs
+
+**Memory Trigger Modes**:
+
+- `ai_determined` (default): Agent decides when to check memory
+- `phrase`: Trigger on specific phrase (e.g., "save this to memory")
+- `interval`: Check every N messages
+
+Configure via `TRIGGER_MODE` in `.env`
+
+## API Endpoints
+
+### OpenAI-Compatible Endpoints
+
+#### `POST /v1/chat/completions`
+
+Standard OpenAI chat completions endpoint.
+
+**Request:**
+```json
+{
+  "model": "vector-graph-memory",
+  "messages": [
+    {"role": "user", "content": "What do you remember about my job search?"}
+  ],
+  "user": "optional-session-id"
+}
+```
+
+**Response:**
+```json
+{
+  "id": "chatcmpl-...",
+  "object": "chat.completion",
+  "created": 1234567890,
+  "model": "vector-graph-memory",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Based on my memory, you applied to..."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 20,
+    "total_tokens": 30
+  }
+}
+```
+
+#### `GET /v1/models`
+
+List available models.
+
+**Response:**
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "vector-graph-memory",
+      "object": "model",
+      "created": 1234567890,
+      "owned_by": "vector-graph-memory"
+    }
+  ]
+}
+```
+
+### Memory Management Endpoints
+
+#### `GET /memory/proposals/{session_id}`
+
+Get pending memory proposals for a session.
+
+**Response:**
+```json
+{
+  "session_id": "user-123",
+  "proposals": {
+    "proposal-uuid-1": {
+      "content": "Applied to Google for Senior SWE role",
+      "entity_type": "job",
+      "relationships": [],
+      "similar_nodes": []
+    }
+  }
+}
+```
+
+#### `POST /memory/confirm/{session_id}/{proposal_id}`
+
+Confirm or reject a memory proposal.
+
+**Query Parameters:**
+- `action`: `add_new`, `update_existing`, or `cancel`
+- `update_node_id`: Required if action is `update_existing`
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "message": "Successfully added job to memory with ID: abc-123"
+}
+```
+
+#### `GET /memory/audit/{session_id}`
+
+Get audit log for a session.
+
+**Query Parameters:**
+- `limit`: Maximum number of entries (default: 50)
+
+**Response:**
+```json
+{
+  "session_id": "user-123",
+  "entries": [
+    {
+      "timestamp": "2026-03-22T01:55:04",
+      "operation": "add_node",
+      "summary": "Added job: Applied to Google...",
+      "entities": ["node-uuid-1"]
+    }
+  ]
+}
+```
+
+### Health Check
+
+#### `GET /`
+
+API health check.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "service": "vector-graph-memory-api",
+  "version": "1.0.0"
+}
+```
+
+## Configuration Reference
+
+### Environment Variables
+
+See `.env.example` for full configuration options.
+
+**Key Settings:**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LLM_MODEL` | PydanticAI model string | `openai:gpt-4o-mini` |
+| `PROJECT_ID` | Memory namespace | `default` |
+| `MEMORY_USE_CASE` | Use case description | General purpose memory |
+| `TRIGGER_MODE` | When to check memory | `ai_determined` |
+| `SIMILARITY_THRESHOLD` | Duplicate detection threshold | `0.85` |
+
+### Memory Trigger Modes
+
+1. **AI Determined** (`ai_determined`)
+   - Agent autonomously decides when to check memory
+   - Best for general use cases
+   - Set: `TRIGGER_MODE=ai_determined`
+
+2. **Phrase-based** (`phrase`)
+   - Trigger on specific phrase
+   - User must explicitly request memory storage
+   - Set: `TRIGGER_MODE=phrase` and `TRIGGER_PHRASE=save this to memory`
+
+3. **Interval-based** (`interval`)
+   - Check every N messages
+   - Predictable behavior
+   - Set: `TRIGGER_MODE=interval` and `TRIGGER_INTERVAL=5`
+
+## Architecture
+
+The API server:
+
+1. **Initializes on startup**:
+   - Connects to Qdrant and JanusGraph
+   - Creates MemoryAgent instance
+   - Loads configuration from environment
+
+2. **Handles requests**:
+   - Receives chat messages via OpenAI API
+   - Runs agent with memory tools
+   - Returns responses
+
+3. **Manages sessions**:
+   - Uses `user` field as session ID
+   - Tracks pending proposals per session
+   - Maintains conversation context
+
+4. **Provides memory control**:
+   - Endpoints to view/confirm proposals
+   - Audit log access
+   - Session management
+
+## Development
+
+### Running with Auto-reload
+
+```bash
+python -m uvicorn src.vgm.api.server:app --reload --host 0.0.0.0 --port 8000
+```
+
+### Testing the API
+
+```bash
+# Health check
+curl http://localhost:8000/
+
+# Chat completion
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "vector-graph-memory",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "user": "test-session"
+  }'
+
+# Check proposals
+curl http://localhost:8000/memory/proposals/test-session
+```
+
+### API Documentation
+
+Interactive API docs available at:
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+
+## Docker Commands
+
+### Start all services
+```bash
+docker compose up -d
+```
+
+### View logs
+```bash
+# All services
+docker compose logs -f
+
+# Just API
+docker compose logs -f api
+
+# Just databases
+docker compose logs -f qdrant janusgraph
+```
+
+### Rebuild API after code changes
+```bash
+docker compose up -d --build api
+```
+
+### Stop all services
+```bash
+docker compose down
+```
+
+### Stop and remove data
+```bash
+docker compose down -v
+```
+
+### Restart just the API
+```bash
+docker compose restart api
+```
+
+## Troubleshooting
+
+### Cannot connect to databases
+
+Error: `Cannot connect to Qdrant/JanusGraph`
+
+**Solution:**
+```bash
+docker compose up -d
+# Wait 10-15 seconds for JanusGraph to initialize
+
+# Check if services are healthy
+docker compose ps
+```
+
+### API key not set
+
+Error: `OPENAI_API_KEY not set`
+
+**Solution:**
+Add to `.env`:
+```bash
+OPENAI_API_KEY=sk-...
+```
+
+Then restart:
+```bash
+docker compose restart api
+```
+
+### Port already in use
+
+Error: `Address already in use`
+
+**Solution:**
+Change port in `.env`:
+```bash
+API_PORT=8001
+```
+
+Then rebuild:
+```bash
+docker compose up -d
+```
+
+### API container won't start
+
+**Check logs:**
+```bash
+docker compose logs api
+```
+
+**Common issues:**
+- Missing `OPENAI_API_KEY` in `.env`
+- Database services not ready (wait 15-20 seconds)
+- Port conflict (change `API_PORT`)
+
+**Force rebuild:**
+```bash
+docker compose up -d --build --force-recreate api
+```
+
+## Next Steps
+
+- See `playground.ipynb` for usage examples
+- Check `README.md` for overall project documentation
+- Review `.env.example` for all configuration options
