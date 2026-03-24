@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
-from gremlin_python.driver import client as gremlin_client
+from gremlin_python.driver import client as gremlin_client  # type: ignore[import-untyped]
 from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
 from dotenv import load_dotenv
 
@@ -22,14 +22,17 @@ load_dotenv()
 
 # --- OpenAI-compatible API Models ---
 
+
 class ChatMessage(BaseModel):
     """Chat message in OpenAI format."""
+
     role: str  # system, user, assistant
     content: str
 
 
 class ChatCompletionRequest(BaseModel):
     """OpenAI chat completion request."""
+
     model: str
     messages: List[ChatMessage]
     temperature: Optional[float] = 0.7
@@ -40,6 +43,7 @@ class ChatCompletionRequest(BaseModel):
 
 class ChatCompletionChoice(BaseModel):
     """Single completion choice."""
+
     index: int
     message: ChatMessage
     finish_reason: str
@@ -47,6 +51,7 @@ class ChatCompletionChoice(BaseModel):
 
 class ChatCompletionUsage(BaseModel):
     """Token usage statistics."""
+
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
@@ -54,6 +59,7 @@ class ChatCompletionUsage(BaseModel):
 
 class ChatCompletionResponse(BaseModel):
     """OpenAI chat completion response."""
+
     id: str
     object: str = "chat.completion"
     created: int
@@ -64,6 +70,7 @@ class ChatCompletionResponse(BaseModel):
 
 class ModelInfo(BaseModel):
     """Model information."""
+
     id: str
     object: str = "model"
     created: int
@@ -72,14 +79,17 @@ class ModelInfo(BaseModel):
 
 class ModelList(BaseModel):
     """List of available models."""
+
     object: str = "list"
     data: List[ModelInfo]
 
 
 # --- Global state ---
 
+
 class AppState:
     """Application state container."""
+
     agent: Optional[MemoryAgent] = None
     qdrant: Optional[QdrantClient] = None
     janus: Optional[gremlin_client.Client] = None
@@ -91,6 +101,7 @@ state = AppState()
 
 # --- Lifecycle management ---
 
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Initialize and cleanup resources."""
@@ -100,73 +111,75 @@ async def lifespan(_app: FastAPI):
     # Configure logging
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
     print("🚀 Initializing Vector Graph Memory API...")
 
     # Connect to databases
-    qdrant_host = os.getenv('QDRANT_HOST', 'localhost')
-    qdrant_port = int(os.getenv('QDRANT_HTTP_PORT', '6333'))
-    janusgraph_host = os.getenv('JANUSGRAPH_HOST', 'localhost')
-    janusgraph_port = int(os.getenv('JANUSGRAPH_PORT', '8182'))
+    qdrant_host = os.getenv("QDRANT_HOST", "localhost")
+    qdrant_port = int(os.getenv("QDRANT_HTTP_PORT", "6333"))
+    janusgraph_host = os.getenv("JANUSGRAPH_HOST", "localhost")
+    janusgraph_port = int(os.getenv("JANUSGRAPH_PORT", "8182"))
 
     state.qdrant = QdrantClient(host=qdrant_host, port=qdrant_port)
     state.janus = gremlin_client.Client(
-        f'ws://{janusgraph_host}:{janusgraph_port}/gremlin',
-        'g'
+        f"ws://{janusgraph_host}:{janusgraph_port}/gremlin", "g"
     )
 
     print(f"  ✓ Connected to Qdrant at {qdrant_host}:{qdrant_port}")
     print(f"  ✓ Connected to JanusGraph at {janusgraph_host}:{janusgraph_port}")
 
     # Initialize memory agent
-    embedding_model = OpenAIEmbeddingModel('text-embedding-3-small')
-    llm_model = os.getenv('LLM_MODEL', 'openai:gpt-4o-mini')
+    embedding_model = OpenAIEmbeddingModel("text-embedding-3-small")
+    llm_model = os.getenv("LLM_MODEL", "openai:gpt-4o-mini")
 
     memory_config = MemoryConfig(
         use_case_description=os.getenv(
-            'MEMORY_USE_CASE',
-            'General purpose conversational memory'
+            "MEMORY_USE_CASE", "General purpose conversational memory"
         ),
         memory_threshold_description=os.getenv(
-            'MEMORY_THRESHOLD',
-            'Store important facts, decisions, and context from conversations'
+            "MEMORY_THRESHOLD",
+            "Store important facts, decisions, and context from conversations",
         ),
-        project_id=os.getenv('PROJECT_ID', 'default'),
-        similarity_threshold=float(os.getenv('SIMILARITY_THRESHOLD', '0.85')),
+        project_id=os.getenv("PROJECT_ID", "default"),
+        similarity_threshold=float(os.getenv("SIMILARITY_THRESHOLD", "0.85")),
     )
 
     # Parse trigger mode with type safety
-    trigger_mode = os.getenv('TRIGGER_MODE', 'ai_determined')
-    valid_trigger_modes: tuple[Literal["phrase", "interval", "ai_determined"], ...] = ("phrase", "interval", "ai_determined")
+    trigger_mode = os.getenv("TRIGGER_MODE", "ai_determined")
+    valid_trigger_modes: tuple[Literal["phrase", "interval", "ai_determined"], ...] = (
+        "phrase",
+        "interval",
+        "ai_determined",
+    )
     if trigger_mode not in valid_trigger_modes:
         trigger_mode = "ai_determined"
 
     # Parse trigger interval with safety for empty strings
-    trigger_interval_str = os.getenv('TRIGGER_INTERVAL', '0')
+    trigger_interval_str = os.getenv("TRIGGER_INTERVAL", "0")
     trigger_interval = int(trigger_interval_str) if trigger_interval_str else 0
 
     trigger_config = MemoryTriggerConfig(
         mode=cast(Literal["phrase", "interval", "ai_determined"], trigger_mode),
-        trigger_phrase=os.getenv('TRIGGER_PHRASE'),
+        trigger_phrase=os.getenv("TRIGGER_PHRASE"),
         message_interval=trigger_interval or None,
     )
 
     # Parse audit backend with type safety
-    audit_backend = os.getenv('AUDIT_BACKEND', 'jsonl')
+    audit_backend = os.getenv("AUDIT_BACKEND", "jsonl")
     valid_audit_backends: tuple[Literal["jsonl", "mongodb"], ...] = ("jsonl", "mongodb")
     if audit_backend not in valid_audit_backends:
         audit_backend = "jsonl"
 
     audit_config = AuditConfig(
         backend=cast(Literal["jsonl", "mongodb"], audit_backend),
-        log_dir=os.getenv('AUDIT_LOG_DIR', '~/.vgm/logs'),
+        log_dir=os.getenv("AUDIT_LOG_DIR", "~/.vgm/logs"),
     )
 
     system_prompt = os.getenv(
-        'SYSTEM_PROMPT',
-        'You are a helpful AI assistant with persistent memory capabilities.'
+        "SYSTEM_PROMPT",
+        "You are a helpful AI assistant with persistent memory capabilities.",
     )
 
     state.agent = MemoryAgent(
@@ -180,11 +193,11 @@ async def lifespan(_app: FastAPI):
         audit_config=audit_config,
     )
 
-    print(f"  ✓ Memory Agent initialized")
+    print("  ✓ Memory Agent initialized")
     print(f"    - Model: {llm_model}")
     print(f"    - Project: {memory_config.project_id}")
     print(f"    - Trigger: {trigger_config.mode}")
-    print(f"✓ API ready on http://0.0.0.0:8000")
+    print("✓ API ready on http://0.0.0.0:8000")
 
     yield
 
@@ -206,6 +219,7 @@ app = FastAPI(
 
 
 # --- Endpoints ---
+
 
 @app.get("/")
 async def root():

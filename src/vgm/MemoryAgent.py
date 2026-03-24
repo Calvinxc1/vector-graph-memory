@@ -1,6 +1,5 @@
 """Memory-enhanced AI agent with vector-graph storage."""
 
-import asyncio
 from typing import Optional, List, Dict, Any, Literal
 from uuid import uuid4
 
@@ -62,7 +61,9 @@ class MemoryAgent:
             trigger_config: Memory trigger configuration (optional)
         """
         self.memory_config = memory_config
-        self.trigger_config = trigger_config or MemoryTriggerConfig(mode="phrase", trigger_phrase="check for memory items")
+        self.trigger_config = trigger_config or MemoryTriggerConfig(
+            mode="phrase", trigger_phrase="check for memory items"
+        )
         self.audit_config = audit_config or AuditConfig()
 
         # Initialize storage layer
@@ -220,7 +221,9 @@ When asked about your capabilities or "what tools" you have, explain these memor
                     proposal += f"  {i}. [{sim.node_type}] {sim.content[:100]}... (similarity: {sim.similarity_score:.2f})\n"
                 proposal += f"\nShould I add '{content[:100]}...' as a new {entity_type} to memory, or update one of the existing items?"
             else:
-                proposal = f"Should I add '{content[:100]}...' as a {entity_type} to memory?"
+                proposal = (
+                    f"Should I add '{content[:100]}...' as a {entity_type} to memory?"
+                )
 
             return proposal
 
@@ -252,7 +255,9 @@ When asked about your capabilities or "what tools" you have, explain these memor
                 formatted = []
                 for i, node in enumerate(results, 1):
                     if isinstance(node, dict) and "content" in node:
-                        formatted.append(f"{i}. [{node.get('node_type', 'unknown')}] {node['content'][:200]}...")
+                        formatted.append(
+                            f"{i}. [{node.get('node_type', 'unknown')}] {node['content'][:200]}..."
+                        )
                     else:
                         formatted.append(f"{i}. {node}")
 
@@ -276,7 +281,9 @@ When asked about your capabilities or "what tools" you have, explain these memor
         if use_case_description:
             self.memory_config.use_case_description = use_case_description
         if memory_threshold_description:
-            self.memory_config.memory_threshold_description = memory_threshold_description
+            self.memory_config.memory_threshold_description = (
+                memory_threshold_description
+            )
         if similarity_threshold is not None:
             self.memory_config.similarity_threshold = similarity_threshold
 
@@ -361,8 +368,14 @@ When asked about your capabilities or "what tools" you have, explain these memor
                     project_id=self.memory_config.project_id,
                     operation_type="add_node",
                     summary=f"Added {proposal['entity_type']}: {proposal['content'][:100]}",
-                    commands=[f"add_node(node_id={node_id})", *[f"add_edge(edge_id={eid})" for eid in edge_ids]],
-                    metadata={"node_type": proposal["entity_type"], "relationship_count": len(edge_ids)},
+                    commands=[
+                        f"add_node(node_id={node_id})",
+                        *[f"add_edge(edge_id={eid})" for eid in edge_ids],
+                    ],
+                    metadata={
+                        "node_type": proposal["entity_type"],
+                        "relationship_count": len(edge_ids),
+                    },
                     affected_entities=[node_id, *edge_ids],
                 )
                 self.audit.log_operation(audit_entry)
@@ -400,6 +413,7 @@ When asked about your capabilities or "what tools" you have, explain these memor
 
         except Exception as e:
             import traceback
+
             error_details = traceback.format_exc()
             return f"Error executing memory operation: {str(e)}\n\nFull traceback:\n{error_details}"
 

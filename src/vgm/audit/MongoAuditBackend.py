@@ -1,6 +1,6 @@
 """MongoDB-based audit backend."""
 
-from typing import List
+from typing import Any, List
 
 from .AuditBackend import AuditBackend
 from ..schemas import AuditEntry
@@ -12,8 +12,7 @@ class MongoAuditBackend(AuditBackend):
 
     def __init__(self, config: AuditConfig):
         try:
-            from pymongo import MongoClient, ASCENDING, IndexModel
-            from pymongo.errors import ConnectionFailure
+            from pymongo import MongoClient
         except ImportError:
             raise ImportError(
                 "MongoDB backend requires pymongo. Install with: pip install vector-graph-memory[mongodb]"
@@ -21,9 +20,11 @@ class MongoAuditBackend(AuditBackend):
 
         self.config = config
         if not config.connection_string:
-            raise ValueError("MongoDB backend requires connection_string in AuditConfig")
+            raise ValueError(
+                "MongoDB backend requires connection_string in AuditConfig"
+            )
 
-        self.client = MongoClient(config.connection_string)
+        self.client: Any = MongoClient(config.connection_string)
         self.db = self.client[config.database]
         self.collection = self.db[config.collection]
 
@@ -45,8 +46,7 @@ class MongoAuditBackend(AuditBackend):
         # Create TTL index if configured
         if self.config.ttl_days:
             self.collection.create_index(
-                "timestamp",
-                expireAfterSeconds=self.config.ttl_days * 24 * 60 * 60
+                "timestamp", expireAfterSeconds=self.config.ttl_days * 24 * 60 * 60
             )
 
     def log_operation(self, entry: AuditEntry) -> None:
@@ -66,9 +66,9 @@ class MongoAuditBackend(AuditBackend):
 
     def get_entity_history(self, entity_id: str) -> List[AuditEntry]:
         """Get all operations affecting an entity."""
-        docs = self.collection.find(
-            {"affected_entities": entity_id}
-        ).sort("timestamp", 1)
+        docs = self.collection.find({"affected_entities": entity_id}).sort(
+            "timestamp", 1
+        )
         return [AuditEntry.model_validate(doc) for doc in docs]
 
     def close(self) -> None:

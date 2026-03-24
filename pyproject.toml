@@ -26,9 +26,11 @@ api = [
 dev = [
     "ipykernel>=7.2.0",
     "jupyter>=1.1.1",
+    "mypy>=1.19.1",
     "notebook>=7.5.5",
     "pytest>=9.0.2",
     "pytest-cov>=7.1.0",
+    "ruff>=0.15.7",
 ]
 
 [build-system]
@@ -37,3 +39,17 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vgm"]
+
+[tool.ruff]
+extend-exclude = ["*.ipynb"]
+
+[tool.mypy]
+python_version = "3.14"
+
+[[tool.mypy.overrides]]
+module = [
+    "gremlin_python",
+    "gremlin_python.*",
+    "nest_asyncio",
+]
+ignore_missing_imports = true

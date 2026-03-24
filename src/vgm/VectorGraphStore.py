@@ -1,18 +1,25 @@
 """Vector and graph database storage layer."""
 
 import asyncio
-from typing import List, Optional, Dict, Any, Coroutine, TypeVar
+from typing import Any, Callable, Coroutine, Dict, List, Optional, TypeVar, cast
 from datetime import datetime, timezone
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
-from gremlin_python.driver import client as gremlin_client
+from qdrant_client.models import (
+    Distance,
+    VectorParams,
+    PointStruct,
+    Filter,
+    FieldCondition,
+    MatchValue,
+)
+from gremlin_python.driver import client as gremlin_client  # type: ignore[import-untyped]
 from pydantic_ai import EmbeddingModel
 
 from .schemas import NodeMetadata, EdgeMetadata, SimilarNode
 from .config import VectorGraphConfig
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 def _run_async(coro: Coroutine[Any, Any, T]) -> T:
@@ -31,19 +38,20 @@ def _run_async(coro: Coroutine[Any, Any, T]) -> T:
     else:
         # There's a running loop
         # Check if it's patchable (uvloop isn't, but asyncio default loop is)
-        import nest_asyncio
+        import nest_asyncio  # type: ignore[import-untyped]
         import threading
+
         loop_type = type(loop).__name__
 
-        if loop_type == 'Loop' and 'uvloop' in loop.__class__.__module__:
+        if loop_type == "Loop" and "uvloop" in loop.__class__.__module__:
             # uvloop can't be patched - run in new thread with new loop
-            result = None
-            exception = None
+            result: list[T] = []
+            exception: Exception | None = None
 
-            def run_in_thread():
+            def run_in_thread() -> None:
                 nonlocal result, exception
                 try:
-                    result = asyncio.run(coro)
+                    result.append(asyncio.run(coro))
                 except Exception as e:
                     exception = e
 
@@ -53,14 +61,16 @@ def _run_async(coro: Coroutine[Any, Any, T]) -> T:
 
             if exception:
                 raise exception
-            return result
+            if not result:
+                raise RuntimeError("Async operation did not produce a result")
+            return result[0]
         else:
             # Regular asyncio loop - can be patched for notebooks
             nest_asyncio.apply()
             return asyncio.run(coro)
 
 
-def _run_in_thread(func, *args, **kwargs):
+def _run_in_thread(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     """Run a synchronous function in a separate thread.
 
     This is needed for Gremlin client operations which internally use
@@ -68,13 +78,14 @@ def _run_in_thread(func, *args, **kwargs):
     (like FastAPI/uvicorn).
     """
     import threading
-    result = None
-    exception = None
 
-    def run():
+    result: list[T] = []
+    exception: Exception | None = None
+
+    def run() -> None:
         nonlocal result, exception
         try:
-            result = func(*args, **kwargs)
+            result.append(func(*args, **kwargs))
         except Exception as e:
             exception = e
 
@@ -84,7 +95,9 @@ def _run_in_thread(func, *args, **kwargs):
 
     if exception:
         raise exception
-    return result
+    if not result:
+        raise RuntimeError("Threaded operation did not produce a result")
+    return result[0]
 
 
 class VectorGraphStore:
@@ -145,15 +158,16 @@ class VectorGraphStore:
         collections = self.qdrant.get_collections().collections
         if not any(c.name == self.config.qdrant_collection for c in collections):
             # Get embedding dimension from a test embedding
-            test_result = _run_async(self.embedding_model.embed(["test"], input_type="document"))
+            test_result = _run_async(
+                self.embedding_model.embed(["test"], input_type="document")
+            )
             embedding_dim = len(test_result.embeddings[0])
 
             self.qdrant.create_collection(
                 collection_name=self.config.qdrant_collection,
                 vectors_config=VectorParams(
-                    size=embedding_dim,
-                    distance=Distance.COSINE
-                )
+                    size=embedding_dim, distance=Distance.COSINE
+                ),
             )
 
     def _generate_embedding(self, text: str) -> List[float]:
@@ -187,15 +201,18 @@ class VectorGraphStore:
             List of top K similar nodes, optionally filtered by threshold
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         embedding = self._generate_embedding(content)
 
         # Build search parameters
-        query_filter = None
+        query_filter: Filter | None = None
         if project_id:
             query_filter = Filter(
-                must=[FieldCondition(key="project_id", match=MatchValue(value=project_id))]
+                must=[
+                    FieldCondition(key="project_id", match=MatchValue(value=project_id))
+                ]
             )
 
         logger.info(f"[SEARCH] Query: '{content[:100]}...'")
@@ -212,15 +229,23 @@ class VectorGraphStore:
 
         logger.info(f"[SEARCH] Found {len(response.points)} results")
         for i, result in enumerate(response.points, 1):
-            logger.info(f"[SEARCH]   {i}. [{result.payload.get('node_type')}] score={result.score:.3f} content='{str(result.payload.get('content', ''))[:80]}...'")
+            payload = cast(Dict[str, Any], result.payload or {})
+            logger.info(
+                f"[SEARCH]   {i}. [{payload.get('node_type')}] "
+                f"score={result.score:.3f} content='{str(payload.get('content', ''))[:80]}...'"
+            )
 
         return [
             SimilarNode(
                 node_id=str(result.id),
-                content=result.payload["content"],
-                node_type=result.payload["node_type"],
+                content=cast(str, (result.payload or {})["content"]),
+                node_type=cast(str, (result.payload or {})["node_type"]),
                 similarity_score=result.score,
-                metadata={k: v for k, v in result.payload.items() if k not in ["content", "node_type"]},
+                metadata={
+                    k: v
+                    for k, v in cast(Dict[str, Any], result.payload or {}).items()
+                    if k not in ["content", "node_type"]
+                },
             )
             for result in response.points
         ]
@@ -241,6 +266,7 @@ class VectorGraphStore:
             ValueError: If content exceeds max_content_size
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         # Check content size
@@ -281,7 +307,7 @@ class VectorGraphStore:
             ],
         )
 
-        logger.info(f"[STORE] Successfully added to Qdrant")
+        logger.info("[STORE] Successfully added to Qdrant")
 
         # Store MINIMAL REFERENCE in JanusGraph (structure only)
         # Use generic "node" label, store actual type as a property
@@ -324,7 +350,7 @@ class VectorGraphStore:
         if not current:
             raise ValueError(f"Node {node_id} not found")
 
-        current_payload = current[0].payload
+        current_payload = dict(cast(Dict[str, Any], current[0].payload or {}))
         updated_at = datetime.now(timezone.utc).isoformat()
 
         # Update payload
@@ -342,11 +368,16 @@ class VectorGraphStore:
             embedding = self._generate_embedding(content)
         else:
             # Keep existing embedding
-            embedding = self.qdrant.retrieve(
+            stored_vector = self.qdrant.retrieve(
                 collection_name=self.config.qdrant_collection,
                 ids=[node_id],
                 with_vectors=True,
             )[0].vector
+            if not isinstance(stored_vector, list):
+                raise TypeError(f"Expected stored vector list for node {node_id}")
+            if any(isinstance(value, list) for value in stored_vector):
+                raise TypeError(f"Expected flat vector list for node {node_id}")
+            embedding = [float(value) for value in cast(List[float], stored_vector)]
 
         if custom_metadata:
             current_payload.update(custom_metadata)
@@ -424,7 +455,7 @@ class VectorGraphStore:
         if not results:
             return None
 
-        return results[0].payload
+        return cast(Dict[str, Any], results[0].payload or {})
 
     def get_nodes_batch(self, node_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         """Retrieve multiple nodes by ID from Qdrant.
@@ -440,7 +471,10 @@ class VectorGraphStore:
             ids=node_ids,
         )
 
-        return {str(result.id): result.payload for result in results}
+        return {
+            str(result.id): cast(Dict[str, Any], result.payload or {})
+            for result in results
+        }
 
     def traverse_from_node(
         self,
@@ -463,7 +497,9 @@ class VectorGraphStore:
             f"g.V().has('node_id', '{self._escape_gremlin_value(node_id)}')"
             f".{gremlin_steps}"
         )
-        results = _run_in_thread(lambda: self.janus.submit(gremlin_query).all().result())
+        results = _run_in_thread(
+            lambda: self.janus.submit(gremlin_query).all().result()
+        )
 
         # If results contain node_ids, fetch full content from Qdrant
         # This is a simple heuristic - results might be node_ids or other data

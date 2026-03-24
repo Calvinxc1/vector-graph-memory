@@ -15,18 +15,18 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from gremlin_python.driver import client as gremlin_client
+from gremlin_python.driver import client as gremlin_client  # type: ignore[import-untyped]
+
 
 def init_schema():
     """Initialize JanusGraph schema."""
     # Connect to JanusGraph
-    janusgraph_host = os.getenv('JANUSGRAPH_HOST', 'localhost')
-    janusgraph_port = int(os.getenv('JANUSGRAPH_PORT', '8182'))
+    janusgraph_host = os.getenv("JANUSGRAPH_HOST", "localhost")
+    janusgraph_port = int(os.getenv("JANUSGRAPH_PORT", "8182"))
 
     print(f"Connecting to JanusGraph at {janusgraph_host}:{janusgraph_port}...")
     janus = gremlin_client.Client(
-        f'ws://{janusgraph_host}:{janusgraph_port}/gremlin',
-        'g'
+        f"ws://{janusgraph_host}:{janusgraph_port}/gremlin", "g"
     )
 
     schema_script = """
@@ -80,6 +80,7 @@ mgmt.commit()
         sys.exit(1)
     finally:
         janus.close()
+
 
 if __name__ == "__main__":
     init_schema()

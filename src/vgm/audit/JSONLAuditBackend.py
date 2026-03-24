@@ -48,7 +48,10 @@ class JSONLAuditBackend(AuditBackend):
 
         # If rotated file exists, append to it; otherwise rename current
         if rotated_file.exists():
-            with open(rotated_file, "a") as dest, open(self.current_log_file, "r") as src:
+            with (
+                open(rotated_file, "a") as dest,
+                open(self.current_log_file, "r") as src,
+            ):
                 dest.write(src.read())
             self.current_log_file.unlink()
         else:

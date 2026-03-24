@@ -17,5 +17,7 @@ class EdgeMetadata(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     source: str  # session_id that created this edge
     project_id: str
-    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)  # Agent confidence in relationship
+    confidence: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0
+    )  # Agent confidence in relationship
     custom_metadata: Dict[str, Any] = Field(default_factory=dict)
