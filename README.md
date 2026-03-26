@@ -39,6 +39,8 @@ The current data model is centered on:
 
 This repository is intentionally maintained as a fully vibe-coded, 100% AI-generated codebase under human direction.
 
+This is a personal experiment for this repository specifically. It is not representative of the normal development model used across the maintainer's other repositories.
+
 All substantive code, documentation, and workflow changes may be produced by coding agents. Human oversight remains responsible for validation, acceptance, and release decisions.
 
 Because of that operating model, the repo policy emphasizes explicit validation, skepticism toward existing implementation patterns, and stronger review discipline for agent-generated changes.
