@@ -1,176 +1,201 @@
 # Vector Graph Memory
 
-A hybrid vector-graph database backend for AI agents, providing long-term persistent memory and a single source of truth across extended agent runs.
+Vector Graph Memory is a hybrid vector-graph backend for AI agents that need persistent memory across long-running sessions and multi-step workflows.
 
-## Overview
+It combines semantic retrieval from a vector store with relationship traversal in a graph database so an agent can both find relevant starting points and navigate connected context.
 
-**Problem:** AI agents need scalable, persistent memory to maintain context across long-running sessions and complex multi-step tasks.
+## What This Repo Is
 
-**Solution:** Vector Graph Memory combines vector embeddings for semantic search with graph databases for relationship tracking, enabling agents to efficiently discover and navigate interconnected information.
+This repository currently contains:
 
-**Use Case:** Initially designed for tracking professional networking and job search efforts (jobs, companies, people, interactions), but built as a general-purpose knowledge graph system extensible to any domain.
+- A Python library for storing and retrieving memory in a combined Qdrant + JanusGraph backend
+- An OpenAI-compatible REST API built with FastAPI
+- A PydanticAI-based memory agent with proposal-and-confirmation workflows
+- Docker-based local development infrastructure, including Open WebUI
+
+The project started around professional networking and job-search tracking, but the underlying storage model is intended to be general-purpose.
+
+## How It Works
+
+The system splits responsibilities across two storage layers:
+
+- Qdrant stores embeddings, full content, and node metadata
+- JanusGraph stores node references and relationships for traversal
+
+Typical query flow:
+
+1. A user or agent submits a natural-language request.
+2. Vector search finds semantically relevant nodes.
+3. Graph traversal expands outward from those nodes.
+4. The agent uses the resulting context to answer or propose memory operations.
+
+The current data model is centered on:
+
+- Nodes: content-bearing entities with embeddings
+- Edges: typed relationships between nodes
+- Audit entries: records of memory operations
+
+## AI Usage
+
+This repository is intentionally maintained as a fully vibe-coded, 100% AI-generated codebase under human direction.
+
+All substantive code, documentation, and workflow changes may be produced by coding agents. Human oversight remains responsible for validation, acceptance, and release decisions.
+
+Because of that operating model, the repo policy emphasizes explicit validation, skepticism toward existing implementation patterns, and stronger review discipline for agent-generated changes.
+
+## Current State
+
+This project is pre-1.0. The authoritative repository version is the package version in `pyproject.toml`, which is currently `0.1.0`.
+
+The repo is usable, but it should be treated as an experimental implementation rather than a stable `1.0` release.
+
+What works today:
+
+- Hybrid vector-graph storage
+- OpenAI-compatible chat API
+- Memory proposal and confirmation flow
+- JSONL audit logging
+- Dockerized local stack
+- Open WebUI integration
+
+What is still incomplete or partially implemented:
+
+- MongoDB audit logging is intended, but API startup does not yet wire MongoDB audit configuration end-to-end.
+- Local API startup via `./start_api.sh` requires `OPENAI_API_KEY` to already be exported in the shell; the script does not currently source `.env`.
+- `ai_determined` trigger mode currently injects memory-review guidance on every turn rather than selectively deciding when to review.
+- `GET /memory/audit/{session_id}` accepts `limit`, but session-scoped audit queries do not currently enforce that limit.
+- JanusGraph schema initialization is still manual for local library and local API usage outside the default Dockerized path.
 
 ## Architecture
 
-- **Type:** Python library + OpenAI-compatible REST API
-- **Python Version:** 3.11+
-- **Vector Database:** Qdrant (semantic entry point discovery)
-- **Graph Database:** JanusGraph (relationship storage and traversal)
-- **AI Framework:** PydanticAI
-- **API Framework:** FastAPI with OpenAI-compatible endpoints
-
-## Core Concepts
-
-### Hybrid Vector-Graph Approach
-
-The system leverages the strengths of both database paradigms:
-
-- **Graph Database:** Captures rich relationships between entities
-  - Example: *Job X* located at *Company Y* who employs *Person Z* who I've had *Correspondence A* with
-- **Vector Database:** Enables semantic search to find optimal entry points into the graph
-  - Natural language queries mapped to relevant starting nodes via embeddings
-
-### Query Flow
-
-1. User/agent submits natural language query
-2. Vector search identifies semantically relevant entry point(s) in the graph
-3. Graph traversal explores relationships from entry points
-4. Contextualized information returned to support agent response
-
-### Data Model
-
-- **Entities:** Graph nodes with vector embeddings on content
-- **Relationships:** Typed edges connecting entities
-- **Embeddings:** Vector representations enabling semantic similarity search
-
-## Roadmap
-
-### v1.0 - Core Primitives
-- Generic entity and relationship storage
-- Vector embedding generation and indexing
-- Hybrid query interface (natural language → vectors → graph → context)
-- Basic CRUD operations for entities and relationships
-
-### v2.0+ - Advanced Features
-- Temporal tracking (timestamps, recency scoring)
-- Memory consolidation (duplicate/similar entity merging)
-- Confidence scoring on relationships
-- Export/backup functionality
-- Multi-agent memory sharing
-- Optional service wrapper (REST/GraphQL API)
+- Type: Python library plus OpenAI-compatible REST API
+- Runtime Python: 3.11+
+- Current CI and local dev target: Python 3.14
+- Vector database: Qdrant
+- Graph database: JanusGraph
+- Agent framework: PydanticAI
+- API framework: FastAPI
 
 ## Development Setup
 
 ### Prerequisites
 
 - Docker and Docker Compose
-- Python 3.14+
-- uv (Python package manager)
+- Python 3.11+ runtime
+- `uv` for local development workflows
 
-### Quick Start
+### Quick Start: API Stack
 
-**Option 1: Using the API (Recommended)**
+This is the recommended path for trying the project.
 
 ```bash
 # 1. Configure environment
 cp .env.example .env
-# Edit .env - at minimum set OPENAI_API_KEY
+# Edit .env and set OPENAI_API_KEY
 
-# 2. Start all services (databases + API)
+# 2. Start the default stack
 docker compose up -d
 
-# 3. Try the API
+# 3. Check the API
 curl http://localhost:8000/v1/models
 ```
 
-The API will be available at `http://localhost:8000` with OpenAI-compatible endpoints.
+This starts the default local stack, including:
 
-**Option 2: Using the Python Library**
+- Qdrant
+- JanusGraph
+- MongoDB container
+- FastAPI service
+- Open WebUI
+
+Endpoints:
+
+- API: `http://localhost:8000`
+- Open WebUI: `http://localhost:3000`
+
+Note: MongoDB is part of the compose stack, but MongoDB-backed audit logging is not yet fully wired in the application runtime. JSONL is the currently working audit backend.
+
+### Quick Start: Python Library
+
+If you want to work with the library directly instead of the API:
 
 ```bash
-# 1. Start databases only
+# 1. Start only the backing databases
 docker compose up -d qdrant janusgraph
 
-# 2. Install library
+# 2. Initialize JanusGraph schema once
+python scripts/init_janusgraph_schema.py
+
+# 3. Install the package
 pip install -e .
 
-# 3. Use in Python
-# See playground.ipynb for examples
-```
-
-### Playground Notebooks
-
-Two Jupyter notebooks are provided:
-
-- **`playground_api.ipynb`** - Examples using the REST API (recommended)
-- **`playground.ipynb`** - Examples using the Python library directly
-
-Start Jupyter and open either notebook:
-
-```bash
+# 4. Explore usage examples
 jupyter notebook
 ```
 
-## Integration with Open WebUI
+Use `playground.ipynb` for direct library examples.
 
-The Vector Graph Memory API is compatible with Open WebUI and other OpenAI-compatible clients.
+## Local API Development
 
-### Using the Included Open WebUI Instance
-
-The easiest way to test the API is with the included Open WebUI container:
+To run the API outside Docker while keeping the databases in Docker:
 
 ```bash
-# Start all services including Open WebUI
-docker compose up -d
+# 1. Install API dependencies
+pip install -e ".[api]"
 
-# Open WebUI will be available at http://localhost:3000
+# 2. Configure environment
+cp .env.example .env
+
+# 3. Start backing services
+docker compose up -d qdrant janusgraph
+
+# 4. Initialize JanusGraph schema once
+python scripts/init_janusgraph_schema.py
+
+# 5. Export your API key in the current shell
+export OPENAI_API_KEY=sk-...
+
+# 6. Start the API
+./start_api.sh
 ```
 
-The Open WebUI instance is pre-configured to use the Vector Graph Memory API. Simply:
+Important caveat: `start_api.sh` currently validates `OPENAI_API_KEY` from the shell environment before startup. It does not automatically load `.env`.
 
-1. Navigate to `http://localhost:3000` in your browser
-2. Start chatting - the agent has persistent memory capabilities
-3. The agent will propose adding information to memory during conversations
-4. Confirm memory proposals through the API endpoints (see `playground_api.ipynb` for examples)
+## Open WebUI Integration
 
-### Using an External Open WebUI Instance
+The easiest way to test the API interactively is through the included Open WebUI container started by the default compose stack.
 
-If you have your own Open WebUI installation:
+Once the stack is running:
 
-1. Start the API: `docker compose up -d api`
-2. In Open WebUI, add a new OpenAI API connection:
-   - **Base URL:** `http://localhost:8000/v1` (or `http://api:8000/v1` if on the same Docker network)
-   - **API Key:** (any value - authentication is disabled by default)
-   - **Model:** `vector-graph-memory`
+1. Open `http://localhost:3000`
+2. Start chatting with the configured model
+3. Let the agent propose memory additions
+4. Confirm proposals through the API endpoints or notebook examples
 
-### Configuration
+If you want to use an external Open WebUI instance, configure an OpenAI-compatible connection with:
 
-Customize Open WebUI port in `.env`:
+- Base URL: `http://localhost:8000/v1`
+- API key: any value for the current default local setup
+- Model: `vector-graph-memory`
 
-```bash
-WEBUI_PORT=3000  # Default port
-```
+If Open WebUI is on the same Docker network, use `http://api:8000/v1` instead.
 
-See [API.md](API.md) for complete API documentation.
+## Notebooks And Docs
 
-## Status
+- `playground_api.ipynb`: examples using the REST API
+- `playground.ipynb`: examples using the Python library directly
+- `API.md`: API-specific setup, endpoints, and implementation caveats
 
-**Current Version:** v1.0 - Core functionality complete
+## Roadmap
 
-**Features:**
-- ✅ Hybrid vector-graph storage
-- ✅ PydanticAI agent with memory tools
-- ✅ OpenAI-compatible REST API
-- ✅ Docker containerization
-- ✅ Memory proposals and confirmations
-- ✅ Audit logging (JSONL/MongoDB)
-- ✅ Configurable memory triggers
+Near-term work still expected in this repo:
 
-**In Development:**
 - Temporal tracking and recency scoring
-- Memory consolidation
-- Advanced graph traversal patterns
+- Memory consolidation and duplicate handling improvements
+- Stronger graph traversal patterns
+- Completing MongoDB audit support
+- Better validation coverage and tests
 
 ## License
 
-See [LICENSE](LICENSE) file for details.
+See [LICENSE](LICENSE) for details.
