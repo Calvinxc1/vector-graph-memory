@@ -10,7 +10,7 @@ class AuditConfig(BaseModel):
     backend: Literal["jsonl", "mongodb"] = "jsonl"
 
     # JSONL-specific options
-    log_dir: Optional[str] = Field(default=None)  # Default: ~/.vgm/logs
+    log_dir: Optional[str] = Field(default=None)  # Default: ./logs
     rotation_size_mb: int = Field(default=10, gt=0)
     rotation_period: Literal["daily", "weekly", "monthly"] = "monthly"
 

@@ -50,11 +50,43 @@ These instructions apply to the entire repo tree.
 - Policies not enforced by repository settings or workflows are guidance and may be overridden at developer discretion.
 - Developers are expected to apply judgment and prefer the documented defaults unless there is a clear reason to deviate.
 
-## 1.3) AI Usage Scope (Guidance)
+## 1.3) AI Usage Scope (Mandatory)
 
-- AI tooling may assist with test authoring, documentation drafting/editing, GitHub Actions/workflow authoring and maintenance, and development planning/decision support.
-- Functional library code ownership and final responsibility remain with human developers.
-- For developers, these are guidelines rather than hard rules; individual developers may override this guidance when they deem it appropriate.
+- This repository is intentionally maintained as a fully vibe-coded, AI-generated codebase under human direction.
+- AI tooling may be used for implementation, refactoring, test authoring, documentation drafting/editing, GitHub Actions/workflow authoring and maintenance, and development planning/decision support.
+- Human developers retain final responsibility for correctness, validation, release decisions, and policy interpretation.
+- Permission to use AI broadly in this repository does not reduce validation requirements or imply acceptance of AI-generated output.
+
+## 1.4) AI-Only Repository Controls (Mandatory)
+
+- Treat all existing code, documentation, and workflow configuration as potentially AI-generated and therefore potentially polished but incorrect, inconsistent, weakly validated, or partially hallucinated.
+- Do not treat existing repository patterns as authoritative merely because they already exist.
+
+### AI-Code Skepticism
+
+- Verify that an existing pattern is internally consistent and correctly applied across the repo before extending it.
+- Do not use prior AI-generated code as the sole justification for architecture, API, or implementation decisions.
+- If code, docs, config, and workflows disagree, surface the conflict explicitly instead of silently choosing one interpretation.
+
+### Validation Requirements
+
+- For low-risk changes, perform at least a brief sanity check appropriate to the change.
+- For moderate-risk changes, complete at least one concrete validation step before presenting the result as ready for acceptance.
+- For high-risk changes, complete the most relevant available validation steps and state any remaining validation gap explicitly.
+- Prefer executable validation when available, including tests, linting, type checking, builds, and workflow verification.
+- If executable validation is available but not run, do not present the result as fully verified.
+- Do not recommend acceptance of nontrivial code based only on reasoning or superficial plausibility when direct validation is feasible.
+
+### Review Standard For AI-Generated Code
+
+- When reviewing or modifying the repo, check specifically for hallucinated abstractions, dead code paths, configuration drift, API/documentation mismatch, inconsistent data models, shallow error handling, unused complexity, and assumptions copied across files without verification.
+- Prefer simplification over speculative extensibility unless the user explicitly asks for broader design.
+
+### Change Traceability
+
+- For substantive changes, state what assumptions the change relies on, what was validated, and what remains unvalidated.
+- Keep implementation status, validation status, and acceptance status separate.
+- Do not imply that passing checks proves correctness beyond the scope of those checks.
 
 ## 2) Explicit-Instruction-Only Mode (Mandatory)
 
@@ -83,3 +115,4 @@ These instructions apply to the entire repo tree.
 - Any bypass confirmation request must include a brief overview of the specific guardrail(s) being bypassed.
 - After any change, summarize exactly what changed and where.
 - If requested action conflicts with these rules, ask for confirmation and explain the conflict.
+- Successful execution, existing precedent, or passing checks does not by itself establish design quality or release readiness in this AI-generated repository.

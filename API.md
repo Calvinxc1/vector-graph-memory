@@ -2,11 +2,13 @@
 
 OpenAI-compatible API server for integrating Vector Graph Memory with Open WebUI and other LLM frontends.
 
+This document describes the current implemented API behavior. The repository is currently pre-1.0, and package version `0.1.0` is the authoritative version.
+
 ## Quick Start
 
 ### Option 1: Docker (Recommended)
 
-Run everything with Docker Compose:
+Run the default stack with Docker Compose:
 
 ```bash
 # 1. Configure environment
@@ -25,14 +27,17 @@ The API will be available at `http://localhost:8000`
 **Included services:**
 - Qdrant (vector database)
 - JanusGraph (graph database)
-- MongoDB (optional, for audit logs)
 - API server (FastAPI with memory agent)
+- Open WebUI
 
 **How it works:**
 - All containers run on an internal Docker network (`vector-graph-network`)
 - The API container connects to databases using container names (`qdrant`, `janusgraph`)
-- Only the API port (8000) is exposed to your host machine
+- The API port (8000) and Open WebUI port (3000 by default) are exposed to your host machine
 - Database connections are handled automatically - no localhost configuration needed!
+
+**Current limitation:**
+- MongoDB is defined in `docker-compose.yml`, but MongoDB-backed audit logging is not fully wired through API startup configuration yet. JSONL is the currently working audit path.
 
 ### Option 2: Local Development
 
@@ -49,11 +54,19 @@ cp .env.example .env
 # 3. Start only databases
 docker compose up -d qdrant janusgraph
 
-# 4. Start API locally
+# 4. Initialize JanusGraph schema once
+python scripts/init_janusgraph_schema.py
+
+# 5. Export OPENAI_API_KEY in your shell
+export OPENAI_API_KEY=sk-...
+
+# 6. Start API locally
 ./start_api.sh
 ```
 
 The API will be available at `http://localhost:8000`
+
+Note: `start_api.sh` currently checks `OPENAI_API_KEY` from the shell environment before starting the API. It does not source `.env` automatically.
 
 ## Open WebUI Integration
 
@@ -77,7 +90,7 @@ Simply chat with the agent through Open WebUI. The agent will:
 
 **Memory Trigger Modes**:
 
-- `ai_determined` (default): Agent decides when to check memory
+- `ai_determined` (default): The server currently injects memory-review guidance on every turn, and the model decides whether to propose anything
 - `phrase`: Trigger on specific phrase (e.g., "save this to memory")
 - `interval`: Check every N messages
 
@@ -188,7 +201,7 @@ Confirm or reject a memory proposal.
 Get audit log for a session.
 
 **Query Parameters:**
-- `limit`: Maximum number of entries (default: 50)
+- `limit`: Maximum number of entries (default: 50) for non-session-scoped recent-history calls; session-scoped history does not currently enforce this limit
 
 **Response:**
 ```json
@@ -236,11 +249,13 @@ See `.env.example` for full configuration options.
 | `TRIGGER_MODE` | When to check memory | `ai_determined` |
 | `SIMILARITY_THRESHOLD` | Duplicate detection threshold | `0.85` |
 
+MongoDB audit environment variables are listed in `.env.example`, but they are not yet fully consumed by API startup code. JSONL is the currently functional audit backend.
+
 ### Memory Trigger Modes
 
 1. **AI Determined** (`ai_determined`)
-   - Agent autonomously decides when to check memory
-   - Best for general use cases
+   - The server currently prompts memory review on every turn
+   - The model still decides whether to propose additions
    - Set: `TRIGGER_MODE=ai_determined`
 
 2. **Phrase-based** (`phrase`)
@@ -276,6 +291,14 @@ The API server:
    - Endpoints to view/confirm proposals
    - Audit log access
    - Session management
+
+## Known Gaps
+
+- MongoDB audit logging is intended but not fully wired into API startup configuration.
+- The API reports `1.0.0` in FastAPI metadata and the health endpoint, while package metadata remains `0.1.0`.
+- `start_api.sh` requires `OPENAI_API_KEY` to be exported in the current shell and does not source `.env`.
+- JanusGraph schema initialization is manual for local library and local API development.
+- Session-scoped audit history does not currently apply the documented `limit` parameter.
 
 ## Development
 
@@ -403,6 +426,7 @@ docker compose logs api
 
 **Common issues:**
 - Missing `OPENAI_API_KEY` in `.env`
+- Missing exported `OPENAI_API_KEY` in the current shell when using `./start_api.sh`
 - Database services not ready (wait 15-20 seconds)
 - Port conflict (change `API_PORT`)
 
