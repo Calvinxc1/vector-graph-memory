@@ -229,7 +229,7 @@ API health check.
 {
   "status": "ok",
   "service": "vector-graph-memory-api",
-  "version": "1.0.0"
+  "version": "0.1.0"
 }
 ```
 
@@ -295,7 +295,6 @@ The API server:
 ## Known Gaps
 
 - MongoDB audit logging is intended but not fully wired into API startup configuration.
-- The API reports `1.0.0` in FastAPI metadata and the health endpoint, while package metadata remains `0.1.0`.
 - `start_api.sh` requires `OPENAI_API_KEY` to be exported in the current shell and does not source `.env`.
 - JanusGraph schema initialization is manual for local library and local API development.
 - Session-scoped audit history does not currently apply the documented `limit` parameter.
