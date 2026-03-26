@@ -18,7 +18,8 @@ class JSONLAuditBackend(AuditBackend):
 
     def __init__(self, config: AuditConfig):
         self.config = config
-        self.log_dir = Path(config.log_dir or os.path.expanduser("~/.vgm/logs"))
+        log_dir = config.log_dir or "./logs"
+        self.log_dir = Path(os.path.expanduser(log_dir))
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.current_log_file = self.log_dir / "audit.jsonl"
         self._write_lock = Lock()

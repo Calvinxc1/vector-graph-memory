@@ -174,7 +174,7 @@ async def lifespan(_app: FastAPI):
 
     audit_config = AuditConfig(
         backend=cast(Literal["jsonl", "mongodb"], audit_backend),
-        log_dir=os.getenv("AUDIT_LOG_DIR", "~/.vgm/logs"),
+        log_dir=os.getenv("AUDIT_LOG_DIR", "./logs"),
     )
 
     system_prompt = os.getenv(
