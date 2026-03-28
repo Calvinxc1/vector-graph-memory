@@ -96,6 +96,17 @@ Simply chat with the agent through Open WebUI. The agent will:
 
 Configure via `TRIGGER_MODE` in `.env`
 
+### Planned Prompt-Tuning Feedback Loop (Not Implemented)
+
+Open WebUI is also the expected frontend for future prompt-tuning work, but that loop is not implemented today.
+
+Planned direction:
+
+- Use DSPy to optimize the answer-synthesis prompt/program that turns retrieved vector and graph context into a grounded response
+- Keep retrieval itself in Vector Graph Memory rather than moving retrieval orchestration into DSPy
+- Evaluate whether Open WebUI response feedback can be captured as a signal for improving system directives and RAG synthesis prompts
+- Prefer cached, model-specific prompt/program variants and offline or background tuning over blocking first-use chat requests
+
 ## API Endpoints
 
 ### OpenAI-Compatible Endpoints

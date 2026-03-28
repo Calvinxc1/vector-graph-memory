@@ -77,6 +77,7 @@ What is still incomplete or partially implemented:
 - Graph database: JanusGraph
 - Agent framework: PydanticAI
 - API framework: FastAPI
+- Planned prompt-tuning layer: DSPy for model-specific optimization of the retrieved-context-to-answer step, while retrieval logic remains native to Vector Graph Memory
 
 ## Development Setup
 
@@ -195,6 +196,8 @@ Near-term work still expected in this repo:
 - Temporal tracking and recency scoring
 - Memory consolidation and duplicate handling improvements
 - Stronger graph traversal patterns
+- DSPy-backed RAG prompt support for tuning how retrieved context is presented to the selected LLM
+- Exploration of Open WebUI feedback signals to improve system directives and RAG synthesis prompts over time
 - Completing MongoDB audit support
 - Better validation coverage and tests
 
