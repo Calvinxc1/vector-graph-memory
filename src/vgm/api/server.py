@@ -24,10 +24,12 @@ from ..rag import (
     DspyArtifactStore,
     DspyCompileManager,
     DspyModelIdentity,
+    DspyRagEvalJudge,
     DspyRagSynthesizer,
     DspyRunLogger,
     RagContextBuilder,
     RubricRagEvaluator,
+    build_evaluation_policy_key,
     build_dspy_lm,
     normalize_dspy_model_name,
 )
@@ -243,6 +245,28 @@ async def lifespan(_app: FastAPI):
             ).lower() in _TRUTHY_ENV_VALUES
             if compile_enabled:
                 try:
+                    scoring_mode = os.getenv(
+                        "RAG_DSPY_EVAL_SCORING_MODE", "deterministic"
+                    ).lower()
+                    if scoring_mode not in {"deterministic", "hybrid"}:
+                        scoring_mode = "deterministic"
+                    judge_model = os.getenv("RAG_DSPY_JUDGE_MODEL", llm_model)
+                    judge_model_name = os.getenv("RAG_DSPY_JUDGE_MODEL_NAME") or normalize_dspy_model_name(
+                        judge_model
+                    )
+                    judge_model_version = os.getenv("RAG_DSPY_JUDGE_MODEL_VERSION")
+                    judge_lm = None
+                    if scoring_mode == "hybrid":
+                        judge_lm = build_dspy_lm(
+                            judge_model,
+                            model_name_override=os.getenv("RAG_DSPY_JUDGE_MODEL_NAME"),
+                            api_key=os.getenv("RAG_DSPY_JUDGE_API_KEY")
+                            or os.getenv("DSPY_API_KEY"),
+                            api_base=os.getenv("RAG_DSPY_JUDGE_API_BASE")
+                            or os.getenv("DSPY_API_BASE"),
+                            model_type=os.getenv("RAG_DSPY_JUDGE_MODEL_TYPE")
+                            or os.getenv("DSPY_MODEL_TYPE"),
+                        )
                     evaluator = RubricRagEvaluator.from_suite(
                         suite_path=os.getenv(
                             "RAG_DSPY_EVAL_SUITE_PATH", str(DEFAULT_EVAL_SUITE_PATH)
@@ -252,6 +276,10 @@ async def lifespan(_app: FastAPI):
                         ),
                         use_case_description=memory_config.use_case_description,
                         project_id=memory_config.project_id,
+                        judge=DspyRagEvalJudge.from_lm(judge_lm)
+                        if judge_lm is not None
+                        else None,
+                        scoring_mode=cast(Literal["deterministic", "hybrid"], scoring_mode),
                     )
                     model_identity = DspyModelIdentity.from_model_name(
                         dspy_model_name,
@@ -265,6 +293,11 @@ async def lifespan(_app: FastAPI):
                             "RAG_DSPY_PROGRAM_VERSION", "1"
                         ),
                         eval_suite_id=evaluator.suite_id,
+                        evaluation_policy_key=build_evaluation_policy_key(
+                            scoring_mode,
+                            judge_model_name=judge_model_name,
+                            judge_model_version=judge_model_version,
+                        ),
                     )
                     state.rag_compile_manager = DspyCompileManager(
                         lm=dspy_lm,

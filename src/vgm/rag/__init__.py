@@ -10,6 +10,12 @@ from .artifacts import (
 from .compile_manager import DspyCompileManager
 from .context_builder import RagContextBuilder
 from .eval_dataset import RagEvalCase, RagEvalRetrievalRef, RagEvalRubric, load_rag_eval_cases
+from .eval_judge import (
+    DspyRagEvalJudge,
+    RagEvalJudge,
+    RagEvalJudgeResult,
+    build_evaluation_policy_key,
+)
 from .evaluation import (
     DEFAULT_EVAL_SOURCE_DIR,
     DEFAULT_EVAL_SUITE_PATH,
@@ -38,6 +44,7 @@ from .synthesizer import DspyRagSynthesizer, build_dspy_lm, normalize_dspy_model
 __all__ = [
     "ConversationTurn",
     "DspyRagSynthesizer",
+    "DspyRagEvalJudge",
     "DspyArtifactManifest",
     "DspyArtifactStore",
     "DspyCompileManager",
@@ -55,6 +62,8 @@ __all__ = [
     "RagEvalCase",
     "RagEvalCaseScore",
     "RagEvalComponentScores",
+    "RagEvalJudge",
+    "RagEvalJudgeResult",
     "RagEvalReport",
     "RagEvalTraceEntry",
     "RagEvalRetrievalRef",
@@ -65,6 +74,7 @@ __all__ = [
     "RagSynthesisResult",
     "RubricRagEvaluator",
     "RetrievedPassage",
+    "build_evaluation_policy_key",
     "build_dspy_lm",
     "compute_rag_eval_score",
     "load_rag_eval_cases",

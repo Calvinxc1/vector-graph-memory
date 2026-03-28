@@ -2,7 +2,7 @@
 
 import json
 
-from vgm.rag import RagSynthesisResult, RubricRagEvaluator
+from vgm.rag import RagEvalJudgeResult, RagSynthesisResult, RubricRagEvaluator
 
 
 class FakeSynthesizer:
@@ -12,6 +12,24 @@ class FakeSynthesizer:
         self.result = result
 
     def synthesize(self, context):
+        return self.result
+
+
+class FakeJudge:
+    """Return a fixed judge result for hybrid scoring tests."""
+
+    def __init__(self, result: RagEvalJudgeResult):
+        self.result = result
+        self.calls = []
+
+    def judge(self, *, case, context, result):
+        self.calls.append(
+            {
+                "case_id": case.case_id,
+                "question": context.current_question,
+                "answer": result.answer,
+            }
+        )
         return self.result
 
 
@@ -120,3 +138,72 @@ def test_rubric_evaluator_returns_trace_entries(tmp_path):
         "How many probes can I have in space by default?"
     )
     assert trace_entries[0].result.case_id == "seti-test-1"
+
+
+def test_hybrid_evaluator_uses_judge_for_soft_scores(tmp_path):
+    fixture_path, source_dir = write_eval_fixture(tmp_path)
+    judge = FakeJudge(
+        RagEvalJudgeResult(
+            groundedness=0.8,
+            completeness=1.0,
+            rationale="The answer is grounded but compressed.",
+        )
+    )
+    evaluator = RubricRagEvaluator.from_suite(
+        suite_path=fixture_path,
+        source_dir=source_dir,
+        use_case_description="Board game rules reference",
+        project_id="seti-test",
+        judge=judge,
+        scoring_mode="hybrid",
+    )
+    synthesizer = FakeSynthesizer(
+        RagSynthesisResult(
+            answer="Default is one probe in space, and planetary-board figures do not count.",
+            cited_source_ids=["source-1"],
+            abstain=False,
+            backend="fake-baseline",
+        )
+    )
+
+    report, trace_entries = evaluator.evaluate_synthesizer_with_trace(synthesizer)
+
+    assert report.average_groundedness == 0.8
+    assert report.average_completeness == 1.0
+    assert judge.calls[0]["case_id"] == "seti-test-1"
+    assert trace_entries[0].result.score_details["scoring_mode"] == "hybrid"
+    assert trace_entries[0].result.score_details["judge_rationale"] == (
+        "The answer is grounded but compressed."
+    )
+    assert trace_entries[0].result.score_details["deterministic_completeness"] < 1.0
+
+
+def test_hybrid_evaluator_keeps_groundedness_guardrail(tmp_path):
+    fixture_path, source_dir = write_eval_fixture(tmp_path)
+    judge = FakeJudge(
+        RagEvalJudgeResult(
+            groundedness=1.0,
+            completeness=1.0,
+            rationale="Judge was optimistic.",
+        )
+    )
+    evaluator = RubricRagEvaluator.from_suite(
+        suite_path=fixture_path,
+        source_dir=source_dir,
+        use_case_description="Board game rules reference",
+        project_id="seti-test",
+        judge=judge,
+        scoring_mode="hybrid",
+    )
+    synthesizer = FakeSynthesizer(
+        RagSynthesisResult(
+            answer="The default limit is two probes in space.",
+            cited_source_ids=["source-1"],
+            abstain=False,
+            backend="fake-baseline",
+        )
+    )
+
+    report = evaluator.evaluate_synthesizer(synthesizer)
+
+    assert report.average_groundedness == 0.0

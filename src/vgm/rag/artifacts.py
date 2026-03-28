@@ -27,6 +27,7 @@ class DspyModelIdentity(BaseModel):
     retrieval_schema_version: str = "1"
     synthesis_program_version: str = "1"
     eval_suite_id: str = "seti_rules_reference_v1"
+    evaluation_policy_key: str = "deterministic"
 
     @classmethod
     def from_model_name(
@@ -39,6 +40,7 @@ class DspyModelIdentity(BaseModel):
         retrieval_schema_version: str = "1",
         synthesis_program_version: str = "1",
         eval_suite_id: str = "seti_rules_reference_v1",
+        evaluation_policy_key: str = "deterministic",
     ) -> "DspyModelIdentity":
         """Build an identity from a normalized provider/model string."""
 
@@ -55,6 +57,7 @@ class DspyModelIdentity(BaseModel):
             retrieval_schema_version=retrieval_schema_version,
             synthesis_program_version=synthesis_program_version,
             eval_suite_id=eval_suite_id,
+            evaluation_policy_key=evaluation_policy_key,
         )
 
     def cache_key(self) -> str:
@@ -67,6 +70,7 @@ class DspyModelIdentity(BaseModel):
             f"schema-{_sanitize(self.retrieval_schema_version)}",
             f"program-{_sanitize(self.synthesis_program_version)}",
             f"suite-{_sanitize(self.eval_suite_id)}",
+            f"eval-{_sanitize(self.evaluation_policy_key)}",
         ]
         raw_key = json.dumps(self.model_dump(mode="json"), sort_keys=True)
         digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:12]

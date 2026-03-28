@@ -73,3 +73,24 @@ def test_artifact_store_round_trips_manifest_and_program(tmp_path):
     loaded_program = store.load_program(identity, program_factory=FakeProgram)
     assert isinstance(loaded_program, FakeProgram)
     assert loaded_program.loaded_from == ("saved:True", False)
+
+
+def test_cache_key_changes_with_evaluation_policy():
+    deterministic = DspyModelIdentity(
+        provider="openai",
+        model_id="gpt-4o-mini",
+        retrieval_schema_version="1",
+        synthesis_program_version="1",
+        eval_suite_id="seti_rules_reference_v1",
+        evaluation_policy_key="deterministic",
+    )
+    hybrid = DspyModelIdentity(
+        provider="openai",
+        model_id="gpt-4o-mini",
+        retrieval_schema_version="1",
+        synthesis_program_version="1",
+        eval_suite_id="seti_rules_reference_v1",
+        evaluation_policy_key="hybrid--openai-gpt-5-4",
+    )
+
+    assert deterministic.cache_key() != hybrid.cache_key()

@@ -16,10 +16,12 @@ from vgm.rag import (
     DEFAULT_RAG_ARTIFACT_DIR,
     DspyArtifactStore,
     DspyCompileManager,
+    DspyRagEvalJudge,
     DspyModelIdentity,
     DspyRagSynthesizer,
     DspyRunLogger,
     RubricRagEvaluator,
+    build_evaluation_policy_key,
     build_dspy_lm,
     normalize_dspy_model_name,
 )
@@ -81,6 +83,17 @@ def parse_args() -> argparse.Namespace:
         default=os.getenv("RAG_RETRIEVAL_SCHEMA_VERSION", "1"),
         help="Retrieval schema version for cache identity.",
     )
+    parser.add_argument(
+        "--scoring-mode",
+        choices=("deterministic", "hybrid"),
+        default=os.getenv("RAG_DSPY_EVAL_SCORING_MODE", "hybrid"),
+        help="Offline eval scoring mode. Hybrid adds an LLM judge for softer scoring.",
+    )
+    parser.add_argument(
+        "--judge-model",
+        default=os.getenv("RAG_DSPY_JUDGE_MODEL"),
+        help="Optional provider:model judge override, e.g. openai:gpt-5.4.",
+    )
     return parser.parse_args()
 
 
@@ -90,6 +103,7 @@ def build_identity(
     evaluator: RubricRagEvaluator,
     program_version: str,
     retrieval_schema_version: str,
+    evaluation_policy_key: str,
 ) -> DspyModelIdentity:
     return DspyModelIdentity.from_model_name(
         normalize_dspy_model_name(model_name),
@@ -99,6 +113,7 @@ def build_identity(
         retrieval_schema_version=retrieval_schema_version,
         synthesis_program_version=program_version,
         eval_suite_id=evaluator.suite_id,
+        evaluation_policy_key=evaluation_policy_key,
     )
 
 
@@ -115,17 +130,40 @@ def main() -> int:
     )
     dspy.settings.configure(lm=lm)
 
+    judge_model = args.judge_model or args.model
+    judge_model_name = os.getenv("RAG_DSPY_JUDGE_MODEL_NAME") or normalize_dspy_model_name(
+        judge_model
+    )
+    judge_model_version = os.getenv("RAG_DSPY_JUDGE_MODEL_VERSION")
+    judge_lm = None
+    if args.scoring_mode == "hybrid":
+        judge_lm = build_dspy_lm(
+            judge_model,
+            model_name_override=os.getenv("RAG_DSPY_JUDGE_MODEL_NAME"),
+            api_key=os.getenv("RAG_DSPY_JUDGE_API_KEY") or os.getenv("DSPY_API_KEY"),
+            api_base=os.getenv("RAG_DSPY_JUDGE_API_BASE") or os.getenv("DSPY_API_BASE"),
+            model_type=os.getenv("RAG_DSPY_JUDGE_MODEL_TYPE")
+            or os.getenv("DSPY_MODEL_TYPE"),
+        )
+
     evaluator = RubricRagEvaluator.from_suite(
         suite_path=args.eval_suite,
         source_dir=args.eval_source_dir,
         use_case_description=args.use_case,
         project_id=args.project_id,
+        judge=DspyRagEvalJudge.from_lm(judge_lm) if judge_lm is not None else None,
+        scoring_mode=args.scoring_mode,
     )
     identity = build_identity(
         model_name=args.model,
         evaluator=evaluator,
         program_version=args.program_version,
         retrieval_schema_version=args.retrieval_schema_version,
+        evaluation_policy_key=build_evaluation_policy_key(
+            args.scoring_mode,
+            judge_model_name=judge_model_name,
+            judge_model_version=judge_model_version,
+        ),
     )
     run_logger = DspyRunLogger(base_dir=args.run_log_dir)
 
@@ -137,8 +175,10 @@ def main() -> int:
         report=baseline_report,
         trace_entries=baseline_traces,
         metadata={
+            "judge_model": judge_model if args.scoring_mode == "hybrid" else None,
             "model": args.model,
             "project_id": args.project_id,
+            "scoring_mode": args.scoring_mode,
             "use_case": args.use_case,
         },
     )
@@ -148,6 +188,8 @@ def main() -> int:
             "run_dir": str(baseline_run_dir),
             "suite_id": baseline_report.suite_id,
             "backend": baseline_report.backend,
+            "judge_model": judge_model if args.scoring_mode == "hybrid" else None,
+            "scoring_mode": args.scoring_mode,
             "total_score": baseline_report.total_score,
             "average_groundedness": baseline_report.average_groundedness,
             "average_abstention": baseline_report.average_abstention,
@@ -171,6 +213,8 @@ def main() -> int:
             raise RuntimeError("Compile run did not produce a persisted log directory")
         payload["compile"] = {
             "run_dir": str(run_logger.last_compile_run_dir),
+            "judge_model": judge_model if args.scoring_mode == "hybrid" else None,
+            "scoring_mode": args.scoring_mode,
             "promoted": outcome.promoted,
             "reason": outcome.reason,
             "baseline_total_score": outcome.baseline_report.total_score,

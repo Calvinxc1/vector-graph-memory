@@ -5,12 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Literal
 
 import dspy
 from pydantic import BaseModel, Field
 
 from .eval_dataset import RagEvalCase, RagEvalRetrievalRef, load_rag_eval_cases
+from .eval_judge import RagEvalJudge, RagEvalJudgeResult
 from .eval_scoring import RagEvalComponentScores, compute_rag_eval_score
 from .models import RagContext, RagSynthesisResult, RetrievedPassage
 
@@ -87,6 +88,7 @@ class RagEvalCaseScore(BaseModel):
     source_alignment: float
     completeness: float
     total_score: float
+    score_details: dict[str, Any] = Field(default_factory=dict)
 
 
 class RagEvalReport(BaseModel):
@@ -185,10 +187,23 @@ class LocalEvalSourceResolver:
 class RubricRagEvaluator:
     """Evaluate DSPy synthesizer outputs against rubric-driven cases."""
 
-    def __init__(self, prepared_cases: list[PreparedRagEvalCase]):
+    def __init__(
+        self,
+        prepared_cases: list[PreparedRagEvalCase],
+        *,
+        judge: RagEvalJudge | None = None,
+        scoring_mode: Literal["deterministic", "hybrid"] = "deterministic",
+    ):
         if not prepared_cases:
             raise ValueError("At least one prepared eval case is required")
+        if scoring_mode == "hybrid" and judge is None:
+            raise ValueError("Hybrid scoring mode requires a judge")
         self.prepared_cases = prepared_cases
+        self.prepared_cases_by_id = {
+            prepared_case.case.case_id: prepared_case for prepared_case in prepared_cases
+        }
+        self.judge = judge
+        self.scoring_mode = scoring_mode
         self.suite_id = prepared_cases[0].case.suite_id
         self.trainset, self.valset = self._build_dspy_splits(prepared_cases)
 
@@ -201,6 +216,8 @@ class RubricRagEvaluator:
         use_case_description: str,
         project_id: str,
         resolver: LocalEvalSourceResolver | None = None,
+        judge: RagEvalJudge | None = None,
+        scoring_mode: Literal["deterministic", "hybrid"] = "deterministic",
     ) -> "RubricRagEvaluator":
         """Load, resolve, and prepare a full eval suite from disk."""
 
@@ -210,7 +227,11 @@ class RubricRagEvaluator:
             cls._prepare_case(case, source_resolver, use_case_description, project_id)
             for case in loaded_cases
         ]
-        return cls(prepared_cases=prepared_cases)
+        return cls(
+            prepared_cases=prepared_cases,
+            judge=judge,
+            scoring_mode=scoring_mode,
+        )
 
     def evaluate_synthesizer(self, synthesizer: Any) -> RagEvalReport:
         """Run the full eval suite against one synthesizer."""
@@ -228,7 +249,7 @@ class RubricRagEvaluator:
         trace_entries: list[RagEvalTraceEntry] = []
         for prepared_case in self.prepared_cases:
             synthesis_result = synthesizer.synthesize(prepared_case.context)
-            scored_result = self._score_result(prepared_case.case, synthesis_result)
+            scored_result = self._score_result(prepared_case, synthesis_result)
             case_results.append(scored_result)
             trace_entries.append(
                 RagEvalTraceEntry(
@@ -270,9 +291,9 @@ class RubricRagEvaluator:
     def metric(self, example: dspy.Example, prediction: Any, trace: Any = None) -> float:
         """DSPy-compatible metric callback for compilation/evaluation."""
         del trace
-        case = self._case_from_example(example)
+        prepared_case = self._prepared_case_from_example(example)
         result = self._result_from_prediction(prediction)
-        return self._score_result(case, result).total_score
+        return self._score_result(prepared_case, result).total_score
 
     @staticmethod
     def _prepare_case(
@@ -359,11 +380,22 @@ class RubricRagEvaluator:
             total_score=sum(result.total_score for result in case_results) / count,
         )
 
-    def _score_result(self, case: RagEvalCase, result: RagSynthesisResult) -> RagEvalCaseScore:
-        groundedness = self._groundedness_score(case, result.answer)
+    def _score_result(
+        self,
+        prepared_case: PreparedRagEvalCase,
+        result: RagSynthesisResult,
+    ) -> RagEvalCaseScore:
+        case = prepared_case.case
+        deterministic_groundedness = self._groundedness_score(case, result.answer)
         abstention = 1.0 if result.abstain == case.rubric.expected_abstain else 0.0
         source_alignment = self._source_alignment_score(case, result.cited_source_ids)
-        completeness = self._completeness_score(case, result)
+        deterministic_completeness = self._completeness_score(case, result)
+        judge_result = self._judge_result(prepared_case, result)
+        groundedness = deterministic_groundedness
+        completeness = deterministic_completeness
+        if judge_result is not None:
+            groundedness = min(deterministic_groundedness, judge_result.groundedness)
+            completeness = judge_result.completeness
         components = RagEvalComponentScores(
             groundedness=groundedness,
             abstention=abstention,
@@ -381,6 +413,19 @@ class RubricRagEvaluator:
             source_alignment=components.source_alignment,
             completeness=components.completeness,
             total_score=compute_rag_eval_score(components),
+            score_details={
+                "scoring_mode": self.scoring_mode,
+                "deterministic_groundedness": deterministic_groundedness,
+                "deterministic_completeness": deterministic_completeness,
+                "judge_groundedness": (
+                    None if judge_result is None else judge_result.groundedness
+                ),
+                "judge_completeness": (
+                    None if judge_result is None else judge_result.completeness
+                ),
+                "judge_rationale": None if judge_result is None else judge_result.rationale,
+                "judge_backend": None if judge_result is None else judge_result.backend,
+            },
         )
 
     @staticmethod
@@ -413,12 +458,25 @@ class RubricRagEvaluator:
         ]
         return sum(1.0 for item in supported if item) / len(supported)
 
-    def _case_from_example(self, example: dspy.Example) -> RagEvalCase:
-        return next(
-            prepared_case.case
-            for prepared_case in self.prepared_cases
-            if prepared_case.case.case_id == example.case_id
+    def _judge_result(
+        self,
+        prepared_case: PreparedRagEvalCase,
+        result: RagSynthesisResult,
+    ) -> RagEvalJudgeResult | None:
+        if self.judge is None or self.scoring_mode != "hybrid":
+            return None
+        if prepared_case.case.rubric.expected_abstain or result.abstain:
+            return None
+        if not result.answer.strip():
+            return None
+        return self.judge.judge(
+            case=prepared_case.case,
+            context=prepared_case.context,
+            result=result,
         )
+
+    def _prepared_case_from_example(self, example: dspy.Example) -> PreparedRagEvalCase:
+        return self.prepared_cases_by_id[example.case_id]
 
     @staticmethod
     def _result_from_prediction(prediction: Any) -> RagSynthesisResult:

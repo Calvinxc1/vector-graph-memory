@@ -273,6 +273,13 @@ See `.env.example` for full configuration options.
 | `RAG_RETRIEVAL_SCHEMA_VERSION` | Retrieval schema version used for cache invalidation | `1` |
 | `RAG_DSPY_EVAL_SUITE_PATH` | Local eval suite JSONL used by DSPy compilation | `tests/fixtures/rag_eval/seti_rules_reference_v1.jsonl` |
 | `RAG_DSPY_EVAL_SOURCE_DIR` | Local extracted source documents used by the eval runner | `tests/fixtures/rag_eval/source_documents/extracted` |
+| `RAG_DSPY_EVAL_SCORING_MODE` | Offline eval scoring mode: `deterministic` or `hybrid` | `deterministic` |
+| `RAG_DSPY_JUDGE_MODEL` | Optional separate provider:model string for the hybrid eval judge | unset |
+| `RAG_DSPY_JUDGE_MODEL_NAME` | Optional explicit DSPy judge model name override | unset |
+| `RAG_DSPY_JUDGE_API_BASE` | Optional API base override for the judge model | unset |
+| `RAG_DSPY_JUDGE_API_KEY` | Optional API key override for the judge model | unset |
+| `RAG_DSPY_JUDGE_MODEL_TYPE` | Optional judge model type override such as `responses` | unset |
+| `RAG_DSPY_JUDGE_MODEL_VERSION` | Optional exact judge model version tag for eval/cache identity | unset |
 | `DSPY_MODEL_NAME` | Optional explicit DSPy model name override | unset |
 | `DSPY_API_BASE` | Optional DSPy API base override for OpenAI-compatible endpoints | unset |
 | `DSPY_API_KEY` | Optional DSPy API key override | unset |
