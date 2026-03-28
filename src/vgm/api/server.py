@@ -12,6 +12,7 @@ from gremlin_python.driver import client as gremlin_client  # type: ignore[impor
 from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
 from dotenv import load_dotenv
 
+from .. import __version__ as PACKAGE_VERSION
 from ..MemoryAgent import MemoryAgent
 from ..config import MemoryConfig, MemoryTriggerConfig, AuditConfig
 
@@ -213,7 +214,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="Vector Graph Memory API",
     description="OpenAI-compatible API with persistent vector-graph memory",
-    version="1.0.0",
+    version=PACKAGE_VERSION,
     lifespan=lifespan,
 )
 
@@ -227,7 +228,7 @@ async def root():
     return {
         "status": "ok",
         "service": "vector-graph-memory-api",
-        "version": "1.0.0",
+        "version": PACKAGE_VERSION,
     }
 
 
