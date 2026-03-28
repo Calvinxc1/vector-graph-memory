@@ -1,5 +1,6 @@
 """FastAPI server with OpenAI-compatible API for Open WebUI integration."""
 
+import asyncio
 import os
 import logging
 from typing import Dict, List, Optional, Literal, cast
@@ -18,9 +19,16 @@ from ..MemoryAgent import MemoryAgent
 from ..config import MemoryConfig, MemoryTriggerConfig, AuditConfig
 from ..rag import (
     ConversationTurn,
+    DEFAULT_EVAL_SOURCE_DIR,
+    DEFAULT_EVAL_SUITE_PATH,
+    DspyArtifactStore,
+    DspyCompileManager,
+    DspyModelIdentity,
     DspyRagSynthesizer,
     RagContextBuilder,
+    RubricRagEvaluator,
     build_dspy_lm,
+    normalize_dspy_model_name,
 )
 
 
@@ -103,6 +111,8 @@ class AppState:
     rag_context_enabled: bool = False
     rag_synthesizer: Optional[DspyRagSynthesizer] = None
     rag_synthesis_enabled: bool = False
+    rag_compile_manager: Optional[DspyCompileManager] = None
+    rag_compile_task: Optional[asyncio.Task[None]] = None
     qdrant: Optional[QdrantClient] = None
     janus: Optional[gremlin_client.Client] = None
     session_proposals: Dict[str, List[str]] = {}  # session_id -> list of proposal_ids
@@ -110,6 +120,9 @@ class AppState:
 
 state = AppState()
 logger = logging.getLogger(__name__)
+
+
+_TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
 # --- Lifecycle management ---
@@ -203,26 +216,17 @@ async def lifespan(_app: FastAPI):
         trigger_config=trigger_config,
         audit_config=audit_config,
     )
-    state.rag_context_enabled = os.getenv("RAG_CONTEXT_ENABLED", "").lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    state.rag_context_enabled = os.getenv("RAG_CONTEXT_ENABLED", "").lower() in _TRUTHY_ENV_VALUES
     state.rag_synthesis_enabled = os.getenv(
         "RAG_DSPY_SYNTHESIS_ENABLED", ""
-    ).lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    ).lower() in _TRUTHY_ENV_VALUES
     if state.rag_context_enabled or state.rag_synthesis_enabled:
         state.rag_context_builder = RagContextBuilder(
             store=state.agent.store,
             memory_config=memory_config,
         )
     if state.rag_synthesis_enabled:
+        dspy_model_name = os.getenv("DSPY_MODEL_NAME") or normalize_dspy_model_name(llm_model)
         try:
             dspy_lm = build_dspy_lm(
                 llm_model,
@@ -232,10 +236,59 @@ async def lifespan(_app: FastAPI):
                 model_type=os.getenv("DSPY_MODEL_TYPE"),
             )
             state.rag_synthesizer = DspyRagSynthesizer.from_lm(dspy_lm)
+            compile_enabled = os.getenv("RAG_DSPY_COMPILE_ENABLED", "").lower() in _TRUTHY_ENV_VALUES
+            auto_compile_enabled = os.getenv(
+                "RAG_DSPY_AUTO_COMPILE_ENABLED", ""
+            ).lower() in _TRUTHY_ENV_VALUES
+            if compile_enabled:
+                try:
+                    evaluator = RubricRagEvaluator.from_suite(
+                        suite_path=os.getenv(
+                            "RAG_DSPY_EVAL_SUITE_PATH", str(DEFAULT_EVAL_SUITE_PATH)
+                        ),
+                        source_dir=os.getenv(
+                            "RAG_DSPY_EVAL_SOURCE_DIR", str(DEFAULT_EVAL_SOURCE_DIR)
+                        ),
+                        use_case_description=memory_config.use_case_description,
+                        project_id=memory_config.project_id,
+                    )
+                    model_identity = DspyModelIdentity.from_model_name(
+                        dspy_model_name,
+                        model_version=os.getenv("DSPY_MODEL_VERSION"),
+                        api_base=os.getenv("DSPY_API_BASE"),
+                        model_type=os.getenv("DSPY_MODEL_TYPE"),
+                        retrieval_schema_version=os.getenv(
+                            "RAG_RETRIEVAL_SCHEMA_VERSION", "1"
+                        ),
+                        synthesis_program_version=os.getenv(
+                            "RAG_DSPY_PROGRAM_VERSION", "1"
+                        ),
+                        eval_suite_id=evaluator.suite_id,
+                    )
+                    state.rag_compile_manager = DspyCompileManager(
+                        lm=dspy_lm,
+                        identity=model_identity,
+                        evaluator=evaluator,
+                        artifact_store=DspyArtifactStore(
+                            base_dir=os.getenv(
+                                "RAG_DSPY_CACHE_DIR", ".vgm/dspy_artifacts"
+                            )
+                        ),
+                        auto_compile=auto_compile_enabled,
+                    )
+                    cached_synthesizer = state.rag_compile_manager.load_cached_synthesizer()
+                    if cached_synthesizer is not None:
+                        state.rag_synthesizer = cached_synthesizer
+                except Exception:
+                    logger.exception(
+                        "[RAG] Failed to initialize DSPy compile manager; continuing with baseline synthesizer"
+                    )
+                    state.rag_compile_manager = None
         except Exception:
             logger.exception("[RAG] Failed to initialize baseline DSPy synthesizer")
             state.rag_synthesis_enabled = False
             state.rag_synthesizer = None
+            state.rag_compile_manager = None
 
     print("  ✓ Memory Agent initialized")
     print(f"    - Model: {llm_model}")
@@ -243,12 +296,15 @@ async def lifespan(_app: FastAPI):
     print(f"    - Trigger: {trigger_config.mode}")
     print(f"    - RAG context seam enabled: {state.rag_context_enabled}")
     print(f"    - DSPy synthesis enabled: {state.rag_synthesis_enabled}")
+    print(f"    - DSPy compile manager enabled: {state.rag_compile_manager is not None}")
     print("✓ API ready on http://0.0.0.0:8000")
 
     yield
 
     # Shutdown
     print("\n🛑 Shutting down...")
+    if state.rag_compile_task and not state.rag_compile_task.done():
+        state.rag_compile_task.cancel()
     if state.janus:
         state.janus.close()
     print("✓ Cleanup complete")
@@ -262,6 +318,44 @@ app = FastAPI(
     version=PACKAGE_VERSION,
     lifespan=lifespan,
 )
+
+
+async def _run_background_compile_job() -> None:
+    """Compile a candidate DSPy program without blocking the request path."""
+
+    compile_manager = state.rag_compile_manager
+    if compile_manager is None:
+        state.rag_compile_task = None
+        return
+
+    try:
+        outcome = await asyncio.to_thread(compile_manager.compile_and_promote)
+        logger.info(
+            "[RAG] Background compile finished promoted=%s baseline_score=%.3f compiled_score=%.3f reason=%s",
+            outcome.promoted,
+            outcome.baseline_report.total_score,
+            outcome.compiled_report.total_score,
+            outcome.reason,
+        )
+        if outcome.promoted:
+            compiled_synthesizer = compile_manager.load_cached_synthesizer()
+            if compiled_synthesizer is not None:
+                state.rag_synthesizer = compiled_synthesizer
+    except Exception:
+        logger.exception("[RAG] Background DSPy compile failed")
+    finally:
+        state.rag_compile_task = None
+
+
+def _maybe_start_background_compile() -> None:
+    """Queue one automatic compile attempt for the current runtime."""
+
+    compile_manager = state.rag_compile_manager
+    if compile_manager is None or state.rag_compile_task is not None:
+        return
+    if not compile_manager.begin_auto_compile():
+        return
+    state.rag_compile_task = asyncio.create_task(_run_background_compile_job())
 
 
 # --- Endpoints ---
@@ -325,6 +419,9 @@ async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResp
                 session_id,
             )
             rag_context = None
+
+    if state.rag_synthesis_enabled and state.rag_compile_manager:
+        _maybe_start_background_compile()
 
     if state.rag_synthesis_enabled and state.rag_synthesizer and rag_context:
         try:

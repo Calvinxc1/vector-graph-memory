@@ -62,6 +62,47 @@ class BaselineRagAnswerSignature(dspy.Signature):
     )
 
 
+class RagAnswerProgram(dspy.Module):
+    """DSPy module used for both baseline and compiled answer synthesis."""
+
+    def __init__(self):
+        super().__init__()
+        self.predictor = dspy.Predict(BaselineRagAnswerSignature)
+
+    def forward(
+        self,
+        *,
+        conversation_history: list[str],
+        question: str,
+        passages: list[str],
+        graph_facts: list[str],
+        use_case: str,
+    ) -> Any:
+        return self.predictor(
+            conversation_history=conversation_history,
+            question=question,
+            passages=passages,
+            graph_facts=graph_facts,
+            use_case=use_case,
+        )
+
+
+def make_rag_answer_program() -> RagAnswerProgram:
+    """Create a fresh DSPy module for RAG answer synthesis."""
+
+    return RagAnswerProgram()
+
+
+def bind_program_lm(program: Any, lm: Any) -> None:
+    """Bind an LM to the program's underlying predictor if supported."""
+
+    predictor = getattr(program, "predictor", None)
+    if predictor is not None and hasattr(predictor, "set_lm"):
+        predictor.set_lm(lm)
+    elif hasattr(program, "set_lm"):
+        program.set_lm(lm)
+
+
 class DspyRagSynthesizer:
     """Baseline DSPy synthesizer over a typed RAG context."""
 
@@ -76,9 +117,19 @@ class DspyRagSynthesizer:
     @classmethod
     def from_lm(cls, lm: Any) -> "DspyRagSynthesizer":
         """Build a synthesizer bound to a DSPy LM."""
-        predictor = dspy.Predict(BaselineRagAnswerSignature)
-        predictor.set_lm(lm)
-        return cls(predictor=predictor)
+        program = make_rag_answer_program()
+        bind_program_lm(program, lm)
+        return cls(predictor=program)
+
+    @classmethod
+    def from_program(
+        cls,
+        program: Any,
+        *,
+        backend_name: str = "dspy-compiled",
+    ) -> "DspyRagSynthesizer":
+        """Wrap a saved or compiled DSPy program in the synthesizer interface."""
+        return cls(predictor=program, backend_name=backend_name)
 
     def synthesize(self, context: RagContext) -> RagSynthesisResult:
         """Generate a grounded answer from a structured RAG context."""

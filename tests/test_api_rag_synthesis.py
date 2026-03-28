@@ -47,6 +47,18 @@ class FakeRagSynthesizer:
         return self.result
 
 
+class FakeCompileManager:
+    """Track whether the API tries to queue background compilation."""
+
+    def __init__(self, should_begin=True):
+        self.should_begin = should_begin
+        self.begin_calls = 0
+
+    def begin_auto_compile(self):
+        self.begin_calls += 1
+        return self.should_begin
+
+
 def build_rag_context() -> RagContext:
     """Create a fixed context for API routing tests."""
     return RagContext(
@@ -107,3 +119,43 @@ def test_chat_completions_falls_back_to_memory_agent_on_synthesis_error(monkeypa
     assert response.choices[0].message.content == "Fallback from MemoryAgent."
     assert len(test_state.agent.calls) == 1
     assert len(test_state.rag_synthesizer.calls) == 1
+
+
+def test_chat_completions_queues_background_compile_once(monkeypatch):
+    test_state = server.AppState()
+    test_state.agent = FakeAgent(output="should not be used")
+    test_state.rag_context_builder = FakeRagContextBuilder(build_rag_context())
+    test_state.rag_context_enabled = True
+    test_state.rag_synthesis_enabled = True
+    test_state.rag_synthesizer = FakeRagSynthesizer(
+        result=RagSynthesisResult(
+            answer="DSPy answer while compile runs in the background.",
+            cited_source_ids=["node-1"],
+            abstain=False,
+            backend="dspy-baseline",
+        )
+    )
+    test_state.rag_compile_manager = FakeCompileManager(should_begin=True)
+    monkeypatch.setattr(server, "state", test_state)
+
+    scheduled = {}
+
+    def fake_create_task(coro):
+        scheduled["started"] = True
+        coro.close()
+        return "task-sentinel"
+
+    monkeypatch.setattr(server.asyncio, "create_task", fake_create_task)
+
+    request = server.ChatCompletionRequest(
+        model="vector-graph-memory",
+        messages=[server.ChatMessage(role="user", content="What do you remember about Acme?")],
+        user="api-session",
+    )
+
+    response = asyncio.run(server.chat_completions(request))
+
+    assert response.choices[0].message.content == "DSPy answer while compile runs in the background."
+    assert test_state.rag_compile_manager.begin_calls == 1
+    assert scheduled["started"] is True
+    assert test_state.rag_compile_task == "task-sentinel"

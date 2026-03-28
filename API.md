@@ -98,14 +98,17 @@ Configure via `TRIGGER_MODE` in `.env`
 
 ### DSPy RAG Synthesis Status
 
-The repository now includes a baseline DSPy synthesis path behind feature flags, but the optimization and feedback loop work is not implemented yet.
+The repository now includes a baseline DSPy synthesis path and a first compile/cache scaffold behind feature flags, but the optimization stack is still intentionally narrow.
 
 Current status:
 
 - `RAG_CONTEXT_ENABLED=true` builds the deterministic `RagContext` seam for requests
 - `RAG_DSPY_SYNTHESIS_ENABLED=true` routes answer synthesis through a baseline DSPy module
+- `RAG_DSPY_COMPILE_ENABLED=true` enables a local compile manager that can load a promoted compiled artifact if one exists
+- `RAG_DSPY_AUTO_COMPILE_ENABLED=true` allows one background compile attempt for an unseen exact model identity
 - If DSPy synthesis fails, the API falls back to the existing `MemoryAgent` path
-- DSPy compilation, caching, and Open WebUI feedback integration remain future work
+- Compilation currently uses the local SETI rules-reference eval suite and local ignored source documents
+- Open WebUI feedback integration remains future work
 
 See `docs/plans/dspy-rag-implementation.md` for the phased implementation plan.
 
@@ -263,10 +266,18 @@ See `.env.example` for full configuration options.
 | `SIMILARITY_THRESHOLD` | Duplicate detection threshold | `0.85` |
 | `RAG_CONTEXT_ENABLED` | Build the deterministic RAG context seam on each chat request | `false` |
 | `RAG_DSPY_SYNTHESIS_ENABLED` | Route answer synthesis through the baseline DSPy module | `false` |
+| `RAG_DSPY_COMPILE_ENABLED` | Enable the local DSPy compile/cache manager | `false` |
+| `RAG_DSPY_AUTO_COMPILE_ENABLED` | Queue one background compile attempt for unseen exact model configs | `false` |
+| `RAG_DSPY_CACHE_DIR` | Local cache directory for promoted compiled DSPy artifacts | `.vgm/dspy_artifacts` |
+| `RAG_DSPY_PROGRAM_VERSION` | Synthesis program version used for cache invalidation | `1` |
+| `RAG_RETRIEVAL_SCHEMA_VERSION` | Retrieval schema version used for cache invalidation | `1` |
+| `RAG_DSPY_EVAL_SUITE_PATH` | Local eval suite JSONL used by DSPy compilation | `tests/fixtures/rag_eval/seti_rules_reference_v1.jsonl` |
+| `RAG_DSPY_EVAL_SOURCE_DIR` | Local extracted source documents used by the eval runner | `tests/fixtures/rag_eval/source_documents/extracted` |
 | `DSPY_MODEL_NAME` | Optional explicit DSPy model name override | unset |
 | `DSPY_API_BASE` | Optional DSPy API base override for OpenAI-compatible endpoints | unset |
 | `DSPY_API_KEY` | Optional DSPy API key override | unset |
 | `DSPY_MODEL_TYPE` | Optional DSPy model type override such as `chat` | unset |
+| `DSPY_MODEL_VERSION` | Optional exact model version tag for cache identity | unset |
 
 MongoDB audit environment variables are listed in `.env.example`, but they are not yet fully consumed by API startup code. JSONL is the currently functional audit backend.
 

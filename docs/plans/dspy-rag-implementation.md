@@ -8,6 +8,7 @@ Status:
 - Phase 1 seam creation is in place
 - A baseline Phase 2 DSPy synthesis path exists behind feature flags
 - Phase 3 eval scaffolding exists as a local SETI rules-reference dataset with tracked rubrics
+- A first Phase 4 compile/cache scaffold exists with local artifact loading and background compile orchestration
 - Scope in this document is limited to answer synthesis over retrieved context
 - Retrieval stays native to Vector Graph Memory
 - Open WebUI feedback is a later optimization input, not a launch dependency

@@ -77,7 +77,7 @@ What is still incomplete or partially implemented:
 - Graph database: JanusGraph
 - Agent framework: PydanticAI
 - API framework: FastAPI
-- Baseline prompt-synthesis layer: DSPy-backed answer synthesis is available behind feature flags, while retrieval logic remains native to Vector Graph Memory and tuning/compilation work is still planned
+- Prompt-synthesis layer: DSPy-backed answer synthesis is available behind feature flags, and a first local compile/cache scaffold now exists for model-specific prompt optimization; retrieval logic remains native to Vector Graph Memory
 
 ## Development Setup
 
