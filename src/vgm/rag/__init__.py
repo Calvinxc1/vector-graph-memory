@@ -16,6 +16,7 @@ from .evaluation import (
     LocalEvalSourceResolver,
     RagEvalCaseScore,
     RagEvalReport,
+    RagEvalTraceEntry,
     RubricRagEvaluator,
 )
 from .eval_scoring import (
@@ -31,6 +32,7 @@ from .models import (
     RagSynthesisResult,
     RetrievedPassage,
 )
+from .run_logging import DEFAULT_DSPY_RUN_LOG_DIR, DspyRunLogger, DspyRunSummary
 from .synthesizer import DspyRagSynthesizer, build_dspy_lm, normalize_dspy_model_name
 
 __all__ = [
@@ -45,12 +47,16 @@ __all__ = [
     "DEFAULT_RAG_EVAL_WEIGHTS",
     "DEFAULT_EVAL_SOURCE_DIR",
     "DEFAULT_EVAL_SUITE_PATH",
+    "DEFAULT_DSPY_RUN_LOG_DIR",
     "DEFAULT_RAG_ARTIFACT_DIR",
     "LocalEvalSourceResolver",
+    "DspyRunLogger",
+    "DspyRunSummary",
     "RagEvalCase",
     "RagEvalCaseScore",
     "RagEvalComponentScores",
     "RagEvalReport",
+    "RagEvalTraceEntry",
     "RagEvalRetrievalRef",
     "RagEvalRubric",
     "RagEvalWeights",

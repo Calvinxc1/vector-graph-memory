@@ -102,6 +102,17 @@ class RagEvalReport(BaseModel):
     total_score: float
 
 
+class RagEvalTraceEntry(BaseModel):
+    """Detailed per-case trace for a logged eval run."""
+
+    case_id: str
+    conversation: list[dict[str, Any]] = Field(default_factory=list)
+    retrieval_refs: list[dict[str, Any]] = Field(default_factory=list)
+    rag_context: dict[str, Any] = Field(default_factory=dict)
+    rubric: dict[str, Any] = Field(default_factory=dict)
+    result: RagEvalCaseScore
+
+
 class LocalEvalSourceResolver:
     """Resolve frozen eval retrieval references into exact local passages."""
 
@@ -204,14 +215,57 @@ class RubricRagEvaluator:
     def evaluate_synthesizer(self, synthesizer: Any) -> RagEvalReport:
         """Run the full eval suite against one synthesizer."""
 
-        case_results = [
-            self._score_result(prepared_case.case, synthesizer.synthesize(prepared_case.context))
-            for prepared_case in self.prepared_cases
-        ]
-        return self._build_report(
+        report, _ = self.evaluate_synthesizer_with_trace(synthesizer)
+        return report
+
+    def evaluate_synthesizer_with_trace(
+        self,
+        synthesizer: Any,
+    ) -> tuple[RagEvalReport, list[RagEvalTraceEntry]]:
+        """Run the full eval suite and return both the aggregate report and per-case traces."""
+
+        case_results: list[RagEvalCaseScore] = []
+        trace_entries: list[RagEvalTraceEntry] = []
+        for prepared_case in self.prepared_cases:
+            synthesis_result = synthesizer.synthesize(prepared_case.context)
+            scored_result = self._score_result(prepared_case.case, synthesis_result)
+            case_results.append(scored_result)
+            trace_entries.append(
+                RagEvalTraceEntry(
+                    case_id=prepared_case.case.case_id,
+                    conversation=[
+                        turn.model_dump(mode="json") for turn in prepared_case.case.conversation
+                    ],
+                    retrieval_refs=[
+                        retrieval_ref.model_dump(mode="json")
+                        for retrieval_ref in prepared_case.case.retrieval_refs
+                    ],
+                    rag_context={
+                        "session_id": prepared_case.context.session_id,
+                        "project_id": prepared_case.context.project_id,
+                        "use_case_description": prepared_case.context.use_case_description,
+                        "current_question": prepared_case.context.current_question,
+                        "retrieval_query": prepared_case.context.retrieval_query,
+                        "conversation_history": [
+                            turn.model_dump(mode="json")
+                            for turn in prepared_case.context.conversation_history
+                        ],
+                        "retrieved_passages": [
+                            passage.model_dump(mode="json")
+                            for passage in prepared_case.context.retrieved_passages
+                        ],
+                        "graph_facts": [],
+                    },
+                    rubric=prepared_case.case.rubric.model_dump(mode="json"),
+                    result=scored_result,
+                )
+            )
+
+        report = self._build_report(
             backend=case_results[0].backend if case_results else "unknown",
             case_results=case_results,
         )
+        return report, trace_entries
 
     def metric(self, example: dspy.Example, prediction: Any, trace: Any = None) -> float:
         """DSPy-compatible metric callback for compilation/evaluation."""

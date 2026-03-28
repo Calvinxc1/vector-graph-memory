@@ -25,6 +25,7 @@ from ..rag import (
     DspyCompileManager,
     DspyModelIdentity,
     DspyRagSynthesizer,
+    DspyRunLogger,
     RagContextBuilder,
     RubricRagEvaluator,
     build_dspy_lm,
@@ -275,6 +276,9 @@ async def lifespan(_app: FastAPI):
                             )
                         ),
                         auto_compile=auto_compile_enabled,
+                        run_logger=DspyRunLogger(
+                            base_dir=os.getenv("RAG_DSPY_RUN_LOG_DIR", ".vgm/dspy_runs")
+                        ),
                     )
                     cached_synthesizer = state.rag_compile_manager.load_cached_synthesizer()
                     if cached_synthesizer is not None:

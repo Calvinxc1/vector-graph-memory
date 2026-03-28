@@ -13,6 +13,7 @@ from .artifacts import (
     DspyModelIdentity,
 )
 from .evaluation import RubricRagEvaluator
+from .run_logging import DspyRunLogger
 from .synthesizer import (
     DspyRagSynthesizer,
     bind_program_lm,
@@ -31,6 +32,7 @@ class DspyCompileManager:
         evaluator: RubricRagEvaluator,
         artifact_store: DspyArtifactStore,
         auto_compile: bool = True,
+        run_logger: DspyRunLogger | None = None,
         compiler_factory: Callable[[Callable[..., float]], Any] | None = None,
     ):
         self.lm = lm
@@ -38,6 +40,7 @@ class DspyCompileManager:
         self.evaluator = evaluator
         self.artifact_store = artifact_store
         self.auto_compile = auto_compile
+        self.run_logger = run_logger
         self.compiler_factory = compiler_factory or self._build_default_compiler
         self.compile_attempted = False
 
@@ -66,24 +69,48 @@ class DspyCompileManager:
     def compile_and_promote(self) -> DspyCompileOutcome:
         """Compile a candidate program, compare it to baseline, and persist the winner."""
 
+        if self.run_logger is not None:
+            (outcome, baseline_traces, compiled_traces), transcript = self.run_logger.capture_output(
+                self._compile_and_promote_inner
+            )
+            self.run_logger.log_compile_outcome(
+                identity=self.identity,
+                outcome=outcome,
+                transcript=transcript,
+                baseline_traces=baseline_traces,
+                compiled_traces=compiled_traces,
+            )
+            return outcome
+
+        outcome, _, _ = self._compile_and_promote_inner()
+        return outcome
+
+    def _compile_and_promote_inner(self) -> tuple[DspyCompileOutcome, list[Any], list[Any]]:
+        """Internal compile/promotion path shared by runtime and manual proof runs."""
+
         baseline_synthesizer = DspyRagSynthesizer.from_lm(self.lm)
-        baseline_report = self.evaluator.evaluate_synthesizer(baseline_synthesizer)
+        baseline_report, baseline_traces = self._evaluate_with_optional_trace(
+            baseline_synthesizer
+        )
 
         compiler = self.compiler_factory(self.evaluator.metric)
         student_program = make_rag_answer_program()
         bind_program_lm(student_program, self.lm)
-        compiled_program = compiler.compile(
-            student_program,
-            trainset=self.evaluator.trainset,
-            valset=self.evaluator.valset,
-        )
+        with dspy.context(lm=self.lm):
+            compiled_program = compiler.compile(
+                student_program,
+                trainset=self.evaluator.trainset,
+                valset=self.evaluator.valset,
+            )
         bind_program_lm(compiled_program, self.lm)
 
         compiled_synthesizer = DspyRagSynthesizer.from_program(
             compiled_program,
             backend_name="dspy-compiled",
         )
-        compiled_report = self.evaluator.evaluate_synthesizer(compiled_synthesizer)
+        compiled_report, compiled_traces = self._evaluate_with_optional_trace(
+            compiled_synthesizer
+        )
 
         groundedness_ok = (
             compiled_report.average_groundedness >= baseline_report.average_groundedness
@@ -113,13 +140,24 @@ class DspyCompileManager:
                 eval_report=compiled_report,
             )
 
-        return DspyCompileOutcome(
-            promoted=promoted,
-            reason=reason,
-            manifest=manifest,
-            baseline_report=baseline_report,
-            compiled_report=compiled_report,
+        return (
+            DspyCompileOutcome(
+                promoted=promoted,
+                reason=reason,
+                manifest=manifest,
+                baseline_report=baseline_report,
+                compiled_report=compiled_report,
+            ),
+            baseline_traces,
+            compiled_traces,
         )
+
+    def _evaluate_with_optional_trace(self, synthesizer: Any) -> tuple[Any, list[Any]]:
+        """Support both trace-aware and report-only evaluator implementations in tests."""
+
+        if hasattr(self.evaluator, "evaluate_synthesizer_with_trace"):
+            return self.evaluator.evaluate_synthesizer_with_trace(synthesizer)
+        return self.evaluator.evaluate_synthesizer(synthesizer), []
 
     @staticmethod
     def _build_default_compiler(metric: Callable[..., float]) -> Any:

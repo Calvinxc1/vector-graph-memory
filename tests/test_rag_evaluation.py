@@ -92,3 +92,31 @@ def test_rubric_evaluator_scores_fully_grounded_answer(tmp_path):
     assert report.total_score >= 0.95
     assert report.average_groundedness == 1.0
     assert report.average_source_alignment == 1.0
+
+
+def test_rubric_evaluator_returns_trace_entries(tmp_path):
+    fixture_path, source_dir = write_eval_fixture(tmp_path)
+    evaluator = RubricRagEvaluator.from_suite(
+        suite_path=fixture_path,
+        source_dir=source_dir,
+        use_case_description="Board game rules reference",
+        project_id="seti-test",
+    )
+    synthesizer = FakeSynthesizer(
+        RagSynthesisResult(
+            answer="By default, one probe can be in space and planetary-board figures do not count.",
+            cited_source_ids=["source-1"],
+            abstain=False,
+            backend="fake-baseline",
+        )
+    )
+
+    report, trace_entries = evaluator.evaluate_synthesizer_with_trace(synthesizer)
+
+    assert report.total_score > 0.0
+    assert len(trace_entries) == 1
+    assert trace_entries[0].case_id == "seti-test-1"
+    assert trace_entries[0].rag_context["current_question"] == (
+        "How many probes can I have in space by default?"
+    )
+    assert trace_entries[0].result.case_id == "seti-test-1"

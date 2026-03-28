@@ -183,3 +183,131 @@ def test_begin_auto_compile_is_single_use():
 
     assert manager.begin_auto_compile() is True
     assert manager.begin_auto_compile() is False
+
+
+def test_compile_manager_uses_dspy_context_with_runtime_lm(monkeypatch):
+    fake_store = FakeArtifactStore()
+    fake_evaluator = FakeEvaluator(
+        baseline_report=build_report(0.60, 1.0, "dspy-baseline"),
+        compiled_report=build_report(0.82, 1.0, "dspy-compiled"),
+    )
+    fake_compiler = FakeCompiler(compiled_program=object())
+    context_calls = []
+
+    class FakeSynthFactory:
+        @staticmethod
+        def from_lm(lm):
+            return SimpleNamespace(kind="baseline", lm=lm)
+
+        @staticmethod
+        def from_program(program, backend_name="dspy-compiled"):
+            return SimpleNamespace(kind=backend_name, program=program)
+
+    class FakeContext:
+        def __init__(self, *, lm):
+            self.lm = lm
+
+        def __enter__(self):
+            context_calls.append(self.lm)
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(
+        "vgm.rag.compile_manager.DspyRagSynthesizer",
+        FakeSynthFactory,
+    )
+    monkeypatch.setattr(
+        "vgm.rag.compile_manager.bind_program_lm",
+        lambda program, lm: None,
+    )
+    monkeypatch.setattr(
+        "vgm.rag.compile_manager.make_rag_answer_program",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
+        "vgm.rag.compile_manager.dspy.context",
+        lambda **kwargs: FakeContext(**kwargs),
+    )
+
+    lm = object()
+    manager = DspyCompileManager(
+        lm=lm,
+        identity=build_identity(),
+        evaluator=fake_evaluator,
+        artifact_store=fake_store,
+        auto_compile=True,
+        compiler_factory=lambda metric: fake_compiler,
+    )
+
+    outcome = manager.compile_and_promote()
+
+    assert outcome.promoted is True
+    assert context_calls == [lm]
+
+
+def test_compile_manager_logs_outcome_when_run_logger_present(monkeypatch):
+    fake_store = FakeArtifactStore()
+    fake_evaluator = FakeEvaluator(
+        baseline_report=build_report(0.60, 1.0, "dspy-baseline"),
+        compiled_report=build_report(0.82, 1.0, "dspy-compiled"),
+    )
+    fake_compiler = FakeCompiler(compiled_program=object())
+    logged = {}
+
+    class FakeSynthFactory:
+        @staticmethod
+        def from_lm(lm):
+            return SimpleNamespace(kind="baseline", lm=lm)
+
+        @staticmethod
+        def from_program(program, backend_name="dspy-compiled"):
+            return SimpleNamespace(kind=backend_name, program=program)
+
+    class FakeRunLogger:
+        def capture_output(self, fn):
+            outcome = fn()
+            return outcome, "captured transcript"
+
+        def log_compile_outcome(self, **kwargs):
+            logged.update(kwargs)
+
+    class FakeContext:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(
+        "vgm.rag.compile_manager.DspyRagSynthesizer",
+        FakeSynthFactory,
+    )
+    monkeypatch.setattr(
+        "vgm.rag.compile_manager.bind_program_lm",
+        lambda program, lm: None,
+    )
+    monkeypatch.setattr(
+        "vgm.rag.compile_manager.make_rag_answer_program",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
+        "vgm.rag.compile_manager.dspy.context",
+        lambda **kwargs: FakeContext(),
+    )
+
+    manager = DspyCompileManager(
+        lm=object(),
+        identity=build_identity(),
+        evaluator=fake_evaluator,
+        artifact_store=fake_store,
+        auto_compile=True,
+        run_logger=FakeRunLogger(),
+        compiler_factory=lambda metric: fake_compiler,
+    )
+
+    outcome = manager.compile_and_promote()
+
+    assert outcome.promoted is True
+    assert logged["transcript"] == "captured transcript"
+    assert logged["outcome"].promoted is True
