@@ -1,0 +1,4 @@
+# Local source documents for eval generation live here.
+# Keep the folder in git, but ignore all actual rulebook files and extracted text.
+*
+!.gitignore

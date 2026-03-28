@@ -7,6 +7,7 @@ Status:
 - Partially implemented
 - Phase 1 seam creation is in place
 - A baseline Phase 2 DSPy synthesis path exists behind feature flags
+- Phase 3 eval scaffolding exists as a local SETI rules-reference dataset with tracked rubrics
 - Scope in this document is limited to answer synthesis over retrieved context
 - Retrieval stays native to Vector Graph Memory
 - Open WebUI feedback is a later optimization input, not a launch dependency
@@ -168,6 +169,13 @@ Definition of done:
 
 - There is a repeatable offline eval set for synthesis quality
 - The baseline DSPy module is measured against explicit metrics rather than subjective inspection alone
+
+Current implementation note:
+
+- The repository now includes a tracked JSONL rules-reference fixture for `SETI` under `tests/fixtures/rag_eval/`
+- Exact source documents remain local and gitignored; tracked eval cases freeze retrieval by document, page, and locator
+- The repository now defines a v1 single-score contract that weights groundedness highest, followed by abstention correctness, source alignment, and completeness
+- Validation tests check fixture structure in all environments and verify local source locators when the ignored corpus is present
 
 ### Phase 4: Add DSPy Compilation And Artifact Caching
 
