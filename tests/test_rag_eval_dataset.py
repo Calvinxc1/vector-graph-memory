@@ -43,7 +43,7 @@ def load_document_pages(document_id: str) -> list[str]:
 def test_seti_rules_reference_dataset_shape():
     cases = load_cases()
 
-    assert len(cases) == 20
+    assert len(cases) == 30
     assert len({case.case_id for case in cases}) == len(cases)
     assert {case.suite_id for case in cases} == {"seti_rules_reference_v1"}
     assert {case.game_id for case in cases} == {"seti"}

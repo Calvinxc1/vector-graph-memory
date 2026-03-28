@@ -67,6 +67,10 @@ class DspyRunLogger:
                 "average_abstention": report.average_abstention,
                 "average_source_alignment": report.average_source_alignment,
                 "average_completeness": report.average_completeness,
+                "bucket_reports": {
+                    bucket_name: bucket_report.model_dump(mode="json")
+                    for bucket_name, bucket_report in report.bucket_reports.items()
+                },
                 **(metadata or {}),
             },
         )
@@ -118,6 +122,14 @@ class DspyRunLogger:
                 "compiled_total_score": outcome.compiled_report.total_score,
                 "baseline_groundedness": outcome.baseline_report.average_groundedness,
                 "compiled_groundedness": outcome.compiled_report.average_groundedness,
+                "baseline_bucket_reports": {
+                    bucket_name: bucket_report.model_dump(mode="json")
+                    for bucket_name, bucket_report in outcome.baseline_report.bucket_reports.items()
+                },
+                "compiled_bucket_reports": {
+                    bucket_name: bucket_report.model_dump(mode="json")
+                    for bucket_name, bucket_report in outcome.compiled_report.bucket_reports.items()
+                },
                 "artifact_key": outcome.manifest.identity.cache_key(),
                 **(metadata or {}),
             },

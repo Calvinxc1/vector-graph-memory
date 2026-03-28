@@ -195,6 +195,10 @@ def main() -> int:
             "average_abstention": baseline_report.average_abstention,
             "average_source_alignment": baseline_report.average_source_alignment,
             "average_completeness": baseline_report.average_completeness,
+            "bucket_reports": {
+                bucket_name: bucket_report.model_dump(mode="json")
+                for bucket_name, bucket_report in baseline_report.bucket_reports.items()
+            },
             "num_cases": len(baseline_report.case_results),
         }
     }
@@ -221,6 +225,14 @@ def main() -> int:
             "compiled_total_score": outcome.compiled_report.total_score,
             "baseline_groundedness": outcome.baseline_report.average_groundedness,
             "compiled_groundedness": outcome.compiled_report.average_groundedness,
+            "baseline_bucket_reports": {
+                bucket_name: bucket_report.model_dump(mode="json")
+                for bucket_name, bucket_report in outcome.baseline_report.bucket_reports.items()
+            },
+            "compiled_bucket_reports": {
+                bucket_name: bucket_report.model_dump(mode="json")
+                for bucket_name, bucket_report in outcome.compiled_report.bucket_reports.items()
+            },
             "artifact_key": outcome.manifest.identity.cache_key(),
         }
 

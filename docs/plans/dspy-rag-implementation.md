@@ -208,6 +208,17 @@ Definition of done:
 
 - Model-specific compiled synthesis artifacts can be created, stored, selected, and reused safely
 
+Current implementation note:
+
+- The repository now persists local proof-run logs under `.vgm/dspy_runs/`
+- The SETI rules-reference eval suite currently contains `30` cases with separate `standard` and `hard_mode` bucket reporting
+- A live proof run with `openai:gpt-5.4-nano` as the synthesis model and `openai:gpt-5.4` as the judge currently scores:
+  - overall total `0.9683`
+  - `hard_mode` total `0.9880`
+  - `standard` total `0.9585`
+- The current compiled candidate still ties baseline on the harder suite, so promotion remains correctly blocked
+- Best restart point for later work: inspect the `hard_mode` traces and improve the compile search space or synthesis prompt before adding more infrastructure
+
 ### Phase 5: Integrate Into The API Behind A Feature Flag
 
 Objective:

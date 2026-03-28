@@ -88,7 +88,20 @@ class RagEvalCaseScore(BaseModel):
     source_alignment: float
     completeness: float
     total_score: float
+    bucket_labels: list[str] = Field(default_factory=list)
     score_details: dict[str, Any] = Field(default_factory=dict)
+
+
+class RagEvalBucketReport(BaseModel):
+    """Aggregate report for one eval bucket."""
+
+    bucket_name: str
+    num_cases: int
+    average_groundedness: float
+    average_abstention: float
+    average_source_alignment: float
+    average_completeness: float
+    total_score: float
 
 
 class RagEvalReport(BaseModel):
@@ -97,6 +110,7 @@ class RagEvalReport(BaseModel):
     suite_id: str
     backend: str
     case_results: list[RagEvalCaseScore] = Field(default_factory=list)
+    bucket_reports: dict[str, RagEvalBucketReport] = Field(default_factory=dict)
     average_groundedness: float
     average_abstention: float
     average_source_alignment: float
@@ -372,6 +386,7 @@ class RubricRagEvaluator:
             suite_id=self.suite_id,
             backend=backend,
             case_results=case_results,
+            bucket_reports=self._build_bucket_reports(case_results),
             average_groundedness=sum(result.groundedness for result in case_results) / count,
             average_abstention=sum(result.abstention for result in case_results) / count,
             average_source_alignment=sum(result.source_alignment for result in case_results)
@@ -379,6 +394,41 @@ class RubricRagEvaluator:
             average_completeness=sum(result.completeness for result in case_results) / count,
             total_score=sum(result.total_score for result in case_results) / count,
         )
+
+    def _build_bucket_reports(
+        self,
+        case_results: list[RagEvalCaseScore],
+    ) -> dict[str, RagEvalBucketReport]:
+        bucketed_results: dict[str, list[RagEvalCaseScore]] = {}
+        for result in case_results:
+            for bucket_name in result.bucket_labels:
+                bucketed_results.setdefault(bucket_name, []).append(result)
+
+        bucket_reports: dict[str, RagEvalBucketReport] = {}
+        for bucket_name, bucket_case_results in bucketed_results.items():
+            count = len(bucket_case_results)
+            bucket_reports[bucket_name] = RagEvalBucketReport(
+                bucket_name=bucket_name,
+                num_cases=count,
+                average_groundedness=sum(
+                    result.groundedness for result in bucket_case_results
+                )
+                / count,
+                average_abstention=sum(
+                    result.abstention for result in bucket_case_results
+                )
+                / count,
+                average_source_alignment=sum(
+                    result.source_alignment for result in bucket_case_results
+                )
+                / count,
+                average_completeness=sum(
+                    result.completeness for result in bucket_case_results
+                )
+                / count,
+                total_score=sum(result.total_score for result in bucket_case_results) / count,
+            )
+        return bucket_reports
 
     def _score_result(
         self,
@@ -413,6 +463,7 @@ class RubricRagEvaluator:
             source_alignment=components.source_alignment,
             completeness=components.completeness,
             total_score=compute_rag_eval_score(components),
+            bucket_labels=self._bucket_labels(case),
             score_details={
                 "scoring_mode": self.scoring_mode,
                 "deterministic_groundedness": deterministic_groundedness,
@@ -427,6 +478,12 @@ class RubricRagEvaluator:
                 "judge_backend": None if judge_result is None else judge_result.backend,
             },
         )
+
+    @staticmethod
+    def _bucket_labels(case: RagEvalCase) -> list[str]:
+        if "hard_mode" in case.tags:
+            return ["hard_mode"]
+        return ["standard"]
 
     @staticmethod
     def _groundedness_score(case: RagEvalCase, answer: str) -> float:

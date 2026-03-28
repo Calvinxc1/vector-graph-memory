@@ -2,7 +2,13 @@
 
 import sys
 
-from vgm.rag import DspyModelIdentity, DspyRunLogger, RagEvalReport, RagEvalTraceEntry
+from vgm.rag import (
+    DspyModelIdentity,
+    DspyRunLogger,
+    RagEvalBucketReport,
+    RagEvalReport,
+    RagEvalTraceEntry,
+)
 from vgm.rag.artifacts import DspyArtifactManifest, DspyCompileOutcome
 
 
@@ -21,6 +27,17 @@ def build_report(score: float, backend: str) -> RagEvalReport:
         suite_id="seti_rules_reference_v1",
         backend=backend,
         case_results=[],
+        bucket_reports={
+            "standard": RagEvalBucketReport(
+                bucket_name="standard",
+                num_cases=1,
+                average_groundedness=score,
+                average_abstention=score,
+                average_source_alignment=score,
+                average_completeness=score,
+                total_score=score,
+            )
+        },
         average_groundedness=score,
         average_abstention=score,
         average_source_alignment=score,
@@ -64,6 +81,7 @@ def test_run_logger_persists_baseline_report(tmp_path):
     assert (run_dir / "trace.json").exists()
     assert (run_dir / "summary.json").exists()
     assert '"proof": true' in (run_dir / "summary.json").read_text().lower()
+    assert '"bucket_reports"' in (run_dir / "summary.json").read_text()
 
 
 def test_run_logger_persists_compile_reports_and_transcript(tmp_path):
@@ -118,6 +136,7 @@ def test_run_logger_persists_compile_reports_and_transcript(tmp_path):
     assert (run_dir / "baseline_trace.json").exists()
     assert (run_dir / "compiled_trace.json").exists()
     assert (run_dir / "compile.log").read_text() == "compile transcript"
+    assert '"baseline_bucket_reports"' in (run_dir / "summary.json").read_text()
 
 
 def test_capture_output_collects_stdout_and_stderr():

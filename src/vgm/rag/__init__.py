@@ -19,6 +19,7 @@ from .eval_judge import (
 from .evaluation import (
     DEFAULT_EVAL_SOURCE_DIR,
     DEFAULT_EVAL_SUITE_PATH,
+    RagEvalBucketReport,
     LocalEvalSourceResolver,
     RagEvalCaseScore,
     RagEvalReport,
@@ -60,6 +61,7 @@ __all__ = [
     "DspyRunLogger",
     "DspyRunSummary",
     "RagEvalCase",
+    "RagEvalBucketReport",
     "RagEvalCaseScore",
     "RagEvalComponentScores",
     "RagEvalJudge",

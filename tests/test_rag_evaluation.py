@@ -33,7 +33,7 @@ class FakeJudge:
         return self.result
 
 
-def write_eval_fixture(tmp_path):
+def write_eval_fixture(tmp_path, *, tags=None):
     source_dir = tmp_path / "sources"
     source_dir.mkdir()
     (source_dir / "seti-rules-en.txt").write_text(
@@ -48,7 +48,7 @@ def write_eval_fixture(tmp_path):
                 "suite_id": "seti_rules_reference_v1",
                 "game_id": "seti",
                 "mode": "rules_reference",
-                "tags": ["single_turn"],
+                "tags": tags or ["single_turn"],
                 "conversation": [
                     {
                         "role": "user",
@@ -110,6 +110,8 @@ def test_rubric_evaluator_scores_fully_grounded_answer(tmp_path):
     assert report.total_score >= 0.95
     assert report.average_groundedness == 1.0
     assert report.average_source_alignment == 1.0
+    assert report.bucket_reports["standard"].num_cases == 1
+    assert report.bucket_reports["standard"].total_score >= 0.95
 
 
 def test_rubric_evaluator_returns_trace_entries(tmp_path):
@@ -138,6 +140,7 @@ def test_rubric_evaluator_returns_trace_entries(tmp_path):
         "How many probes can I have in space by default?"
     )
     assert trace_entries[0].result.case_id == "seti-test-1"
+    assert trace_entries[0].result.bucket_labels == ["standard"]
 
 
 def test_hybrid_evaluator_uses_judge_for_soft_scores(tmp_path):
@@ -176,6 +179,7 @@ def test_hybrid_evaluator_uses_judge_for_soft_scores(tmp_path):
         "The answer is grounded but compressed."
     )
     assert trace_entries[0].result.score_details["deterministic_completeness"] < 1.0
+    assert report.bucket_reports["standard"].average_completeness == 1.0
 
 
 def test_hybrid_evaluator_keeps_groundedness_guardrail(tmp_path):
@@ -207,3 +211,30 @@ def test_hybrid_evaluator_keeps_groundedness_guardrail(tmp_path):
     report = evaluator.evaluate_synthesizer(synthesizer)
 
     assert report.average_groundedness == 0.0
+
+
+def test_rubric_evaluator_tracks_hard_mode_bucket(tmp_path):
+    fixture_path, source_dir = write_eval_fixture(tmp_path, tags=["single_turn", "hard_mode"])
+    evaluator = RubricRagEvaluator.from_suite(
+        suite_path=fixture_path,
+        source_dir=source_dir,
+        use_case_description="Board game rules reference",
+        project_id="seti-test",
+    )
+    synthesizer = FakeSynthesizer(
+        RagSynthesisResult(
+            answer=(
+                "By default, a player can have only one probe on the solar system board at a time, "
+                "and figures on planetary boards do not count as probes in space for that limit."
+            ),
+            cited_source_ids=["source-1"],
+            abstain=False,
+            backend="fake-baseline",
+        )
+    )
+
+    report, trace_entries = evaluator.evaluate_synthesizer_with_trace(synthesizer)
+
+    assert "hard_mode" in report.bucket_reports
+    assert report.bucket_reports["hard_mode"].num_cases == 1
+    assert trace_entries[0].result.bucket_labels == ["hard_mode"]
