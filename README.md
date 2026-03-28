@@ -77,7 +77,7 @@ What is still incomplete or partially implemented:
 - Graph database: JanusGraph
 - Agent framework: PydanticAI
 - API framework: FastAPI
-- Planned prompt-tuning layer: DSPy for model-specific optimization of the retrieved-context-to-answer step, while retrieval logic remains native to Vector Graph Memory
+- Baseline prompt-synthesis layer: DSPy-backed answer synthesis is available behind feature flags, while retrieval logic remains native to Vector Graph Memory and tuning/compilation work is still planned
 
 ## Development Setup
 
@@ -188,6 +188,7 @@ If Open WebUI is on the same Docker network, use `http://api:8000/v1` instead.
 - `playground_api.ipynb`: examples using the REST API
 - `playground.ipynb`: examples using the Python library directly
 - `API.md`: API-specific setup, endpoints, and implementation caveats
+- `docs/plans/dspy-rag-implementation.md`: phased implementation plan for DSPy-backed RAG synthesis
 
 ## Roadmap
 
@@ -196,7 +197,7 @@ Near-term work still expected in this repo:
 - Temporal tracking and recency scoring
 - Memory consolidation and duplicate handling improvements
 - Stronger graph traversal patterns
-- DSPy-backed RAG prompt support for tuning how retrieved context is presented to the selected LLM
+- Expand the baseline DSPy-backed RAG synthesis path into model-specific tuning and compilation
 - Exploration of Open WebUI feedback signals to improve system directives and RAG synthesis prompts over time
 - Completing MongoDB audit support
 - Better validation coverage and tests

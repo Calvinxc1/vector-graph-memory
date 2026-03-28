@@ -110,6 +110,7 @@ These instructions apply to the entire repo tree.
 - Before any change, state exactly what you will do.
 - For bug/failure remediation (for example CI/workflow errors), first explain the proposed fix and ask for explicit confirmation before making file edits.
 - When changing GitHub Actions/workflow behavior, verify `AGENTS.md` policy text matches the realized workflow triggers and rules; if not aligned, update `AGENTS.md` in the same change.
+- Use `uv` as the Python package manager for this repository and prefer `uv run ...` for Python command execution and tests.
 - `uv.lock` is intentionally developer-local and not tracked in git for this repository. Do not commit it.
 - Guardrails may be bypassed only after explicit user verification. This verification must be a separate interaction beyond the original action request, where the user explicitly confirms the bypass.
 - Any bypass confirmation request must include a brief overview of the specific guardrail(s) being bypassed.

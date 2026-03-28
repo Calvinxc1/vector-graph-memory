@@ -96,16 +96,18 @@ Simply chat with the agent through Open WebUI. The agent will:
 
 Configure via `TRIGGER_MODE` in `.env`
 
-### Planned Prompt-Tuning Feedback Loop (Not Implemented)
+### DSPy RAG Synthesis Status
 
-Open WebUI is also the expected frontend for future prompt-tuning work, but that loop is not implemented today.
+The repository now includes a baseline DSPy synthesis path behind feature flags, but the optimization and feedback loop work is not implemented yet.
 
-Planned direction:
+Current status:
 
-- Use DSPy to optimize the answer-synthesis prompt/program that turns retrieved vector and graph context into a grounded response
-- Keep retrieval itself in Vector Graph Memory rather than moving retrieval orchestration into DSPy
-- Evaluate whether Open WebUI response feedback can be captured as a signal for improving system directives and RAG synthesis prompts
-- Prefer cached, model-specific prompt/program variants and offline or background tuning over blocking first-use chat requests
+- `RAG_CONTEXT_ENABLED=true` builds the deterministic `RagContext` seam for requests
+- `RAG_DSPY_SYNTHESIS_ENABLED=true` routes answer synthesis through a baseline DSPy module
+- If DSPy synthesis fails, the API falls back to the existing `MemoryAgent` path
+- DSPy compilation, caching, and Open WebUI feedback integration remain future work
+
+See `docs/plans/dspy-rag-implementation.md` for the phased implementation plan.
 
 ## API Endpoints
 
@@ -259,6 +261,12 @@ See `.env.example` for full configuration options.
 | `MEMORY_USE_CASE` | Use case description | General purpose memory |
 | `TRIGGER_MODE` | When to check memory | `ai_determined` |
 | `SIMILARITY_THRESHOLD` | Duplicate detection threshold | `0.85` |
+| `RAG_CONTEXT_ENABLED` | Build the deterministic RAG context seam on each chat request | `false` |
+| `RAG_DSPY_SYNTHESIS_ENABLED` | Route answer synthesis through the baseline DSPy module | `false` |
+| `DSPY_MODEL_NAME` | Optional explicit DSPy model name override | unset |
+| `DSPY_API_BASE` | Optional DSPy API base override for OpenAI-compatible endpoints | unset |
+| `DSPY_API_KEY` | Optional DSPy API key override | unset |
+| `DSPY_MODEL_TYPE` | Optional DSPy model type override such as `chat` | unset |
 
 MongoDB audit environment variables are listed in `.env.example`, but they are not yet fully consumed by API startup code. JSONL is the currently functional audit backend.
 
