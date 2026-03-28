@@ -7,6 +7,17 @@ from .MemoryAgent import MemoryAgent
 
 # Storage layer
 from .VectorGraphStore import VectorGraphStore
+from .rag import (
+    ConversationTurn,
+    DspyRagSynthesizer,
+    GraphFact,
+    RagContext,
+    RagContextBuilder,
+    RagSynthesisResult,
+    RetrievedPassage,
+    build_dspy_lm,
+    normalize_dspy_model_name,
+)
 
 # Schemas
 from .schemas import (
@@ -37,6 +48,15 @@ __all__ = [
     # Main API
     "MemoryAgent",
     "VectorGraphStore",
+    "ConversationTurn",
+    "DspyRagSynthesizer",
+    "GraphFact",
+    "RagContext",
+    "RagContextBuilder",
+    "RagSynthesisResult",
+    "RetrievedPassage",
+    "build_dspy_lm",
+    "normalize_dspy_model_name",
     # Schemas
     "NodeMetadata",
     "EdgeMetadata",

@@ -1,6 +1,7 @@
 """FastAPI server with OpenAI-compatible API for Open WebUI integration."""
 
 import os
+import logging
 from typing import Dict, List, Optional, Literal, cast
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -15,6 +16,12 @@ from dotenv import load_dotenv
 from .. import __version__ as PACKAGE_VERSION
 from ..MemoryAgent import MemoryAgent
 from ..config import MemoryConfig, MemoryTriggerConfig, AuditConfig
+from ..rag import (
+    ConversationTurn,
+    DspyRagSynthesizer,
+    RagContextBuilder,
+    build_dspy_lm,
+)
 
 
 # Load environment variables
@@ -92,12 +99,17 @@ class AppState:
     """Application state container."""
 
     agent: Optional[MemoryAgent] = None
+    rag_context_builder: Optional[RagContextBuilder] = None
+    rag_context_enabled: bool = False
+    rag_synthesizer: Optional[DspyRagSynthesizer] = None
+    rag_synthesis_enabled: bool = False
     qdrant: Optional[QdrantClient] = None
     janus: Optional[gremlin_client.Client] = None
     session_proposals: Dict[str, List[str]] = {}  # session_id -> list of proposal_ids
 
 
 state = AppState()
+logger = logging.getLogger(__name__)
 
 
 # --- Lifecycle management ---
@@ -107,8 +119,6 @@ state = AppState()
 async def lifespan(_app: FastAPI):
     """Initialize and cleanup resources."""
     # Startup
-    import logging
-
     # Configure logging
     logging.basicConfig(
         level=logging.INFO,
@@ -193,11 +203,46 @@ async def lifespan(_app: FastAPI):
         trigger_config=trigger_config,
         audit_config=audit_config,
     )
+    state.rag_context_enabled = os.getenv("RAG_CONTEXT_ENABLED", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    state.rag_synthesis_enabled = os.getenv(
+        "RAG_DSPY_SYNTHESIS_ENABLED", ""
+    ).lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if state.rag_context_enabled or state.rag_synthesis_enabled:
+        state.rag_context_builder = RagContextBuilder(
+            store=state.agent.store,
+            memory_config=memory_config,
+        )
+    if state.rag_synthesis_enabled:
+        try:
+            dspy_lm = build_dspy_lm(
+                llm_model,
+                model_name_override=os.getenv("DSPY_MODEL_NAME"),
+                api_key=os.getenv("DSPY_API_KEY"),
+                api_base=os.getenv("DSPY_API_BASE"),
+                model_type=os.getenv("DSPY_MODEL_TYPE"),
+            )
+            state.rag_synthesizer = DspyRagSynthesizer.from_lm(dspy_lm)
+        except Exception:
+            logger.exception("[RAG] Failed to initialize baseline DSPy synthesizer")
+            state.rag_synthesis_enabled = False
+            state.rag_synthesizer = None
 
     print("  ✓ Memory Agent initialized")
     print(f"    - Model: {llm_model}")
     print(f"    - Project: {memory_config.project_id}")
     print(f"    - Trigger: {trigger_config.mode}")
+    print(f"    - RAG context seam enabled: {state.rag_context_enabled}")
+    print(f"    - DSPy synthesis enabled: {state.rag_synthesis_enabled}")
     print("✓ API ready on http://0.0.0.0:8000")
 
     yield
@@ -256,6 +301,71 @@ async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResp
         raise HTTPException(status_code=400, detail="No messages provided")
 
     session_id = request.user or "default"
+
+    rag_context = None
+    if (state.rag_context_enabled or state.rag_synthesis_enabled) and state.rag_context_builder:
+        try:
+            rag_messages = [
+                ConversationTurn(role=msg.role, content=msg.content)
+                for msg in request.messages
+            ]
+            rag_context = state.rag_context_builder.build_from_messages(
+                messages=rag_messages,
+                session_id=session_id,
+            )
+            logger.info(
+                "[RAG] Built context for session=%s passages=%d history_turns=%d",
+                session_id,
+                len(rag_context.retrieved_passages),
+                len(rag_context.conversation_history),
+            )
+        except Exception:
+            logger.exception(
+                "[RAG] Failed to build deterministic context for session=%s",
+                session_id,
+            )
+            rag_context = None
+
+    if state.rag_synthesis_enabled and state.rag_synthesizer and rag_context:
+        try:
+            rag_result = state.rag_synthesizer.synthesize(rag_context)
+            logger.info(
+                "[RAG] Synthesized answer for session=%s backend=%s cited_sources=%d abstain=%s",
+                session_id,
+                rag_result.backend,
+                len(rag_result.cited_source_ids),
+                rag_result.abstain,
+            )
+            if rag_result.answer:
+                return ChatCompletionResponse(
+                    id=f"chatcmpl-{session_id}-{int(datetime.now().timestamp())}",
+                    created=int(datetime.now().timestamp()),
+                    model=request.model,
+                    choices=[
+                        ChatCompletionChoice(
+                            index=0,
+                            message=ChatMessage(role="assistant", content=rag_result.answer),
+                            finish_reason="stop",
+                        )
+                    ],
+                    usage=ChatCompletionUsage(
+                        prompt_tokens=len(rag_context.retrieval_query.split()),
+                        completion_tokens=len(rag_result.answer.split()),
+                        total_tokens=(
+                            len(rag_context.retrieval_query.split())
+                            + len(rag_result.answer.split())
+                        ),
+                    ),
+                )
+            logger.warning(
+                "[RAG] Baseline DSPy synthesizer returned an empty answer for session=%s; falling back",
+                session_id,
+            )
+        except Exception:
+            logger.exception(
+                "[RAG] DSPy synthesis failed for session=%s; falling back to MemoryAgent",
+                session_id,
+            )
 
     # Build conversation context from message history
     # Format: "Previous context:\nUser: ...\nAssistant: ...\n\nCurrent question: ..."

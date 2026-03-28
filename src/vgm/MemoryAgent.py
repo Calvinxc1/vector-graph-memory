@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models import Model
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from qdrant_client import QdrantClient
 from gremlin_python.driver import client as gremlin_client
 from pydantic_ai import EmbeddingModel
@@ -21,8 +21,7 @@ class AgentDependencies(BaseModel):
 
     memory_agent: Any  # Reference to MemoryAgent instance
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class MemoryAgent:
