@@ -48,8 +48,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: ${API_CONTAINER_NAME:-vector-graph-api}
-    ports:
-      - "${API_PORT:-8000}:8000"
+    expose:
+      - "8000"
     volumes:
       - ./logs:/app/logs
     environment:
@@ -76,6 +76,7 @@ services:
 
       # System Prompt
       - SYSTEM_PROMPT=${SYSTEM_PROMPT:-You are a helpful AI assistant with persistent memory capabilities.}
+      - API_ROOT_PATH=/vgm-api
 
       # Audit Configuration
       - AUDIT_BACKEND=${AUDIT_BACKEND:-jsonl}
@@ -90,8 +91,8 @@ services:
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: ${WEBUI_CONTAINER_NAME:-vector-graph-webui}
-    ports:
-      - "${WEBUI_PORT:-3000}:8080"
+    expose:
+      - "8080"
     volumes:
       - open_webui_data:/app/backend/data
     environment:
@@ -100,6 +101,20 @@ services:
       - WEBUI_AUTH=false
     depends_on:
       - api
+    restart: unless-stopped
+    networks:
+      - vector-graph-network
+
+  proxy:
+    image: nginx:1.27-alpine
+    container_name: ${PROXY_CONTAINER_NAME:-vector-graph-proxy}
+    ports:
+      - "${PROXY_PORT:-8052}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+      - open-webui
     restart: unless-stopped
     networks:
       - vector-graph-network

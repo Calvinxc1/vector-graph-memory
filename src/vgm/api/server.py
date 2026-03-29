@@ -354,6 +354,7 @@ app = FastAPI(
     description="OpenAI-compatible API with persistent vector-graph memory",
     version=PACKAGE_VERSION,
     lifespan=lifespan,
+    root_path=os.getenv("API_ROOT_PATH", ""),
 )
 
 

@@ -142,8 +142,8 @@ cp .env.example .env
 # 2. Start the default stack
 docker compose up -d
 
-# 3. Check the API
-curl http://localhost:8000/v1/models
+# 3. Check the proxied API
+curl http://localhost:8052/vgm-api/v1/models
 ```
 
 This starts:
@@ -153,11 +153,12 @@ This starts:
 - MongoDB container
 - FastAPI service
 - Open WebUI
+- Nginx reverse proxy
 
 Endpoints:
 
-- API: `http://localhost:8000`
-- Open WebUI: `http://localhost:3000`
+- Open WebUI: `http://localhost:8052/`
+- API: `http://localhost:8052/vgm-api/`
 
 Note: MongoDB is included in Compose, but JSONL is still the currently working audit backend.
 
@@ -209,22 +210,22 @@ Important caveat: `start_api.sh` does not currently source `.env`.
 
 ## Open WebUI Integration
 
-The easiest way to test the API interactively is through the included Open WebUI container started by the default Compose stack.
+The default Compose stack now serves Open WebUI and the API behind one reverse proxy entrypoint.
 
 Once the stack is running:
 
-1. Open `http://localhost:3000`
-2. Add or use the configured OpenAI-compatible connection
-3. Chat with the `vector-graph-memory` model
-4. Inspect memory proposals through the API or notebooks
+1. Open `http://localhost:8052/`
+2. Use Open WebUI at the root path
+3. Reach the proxied API under `http://localhost:8052/vgm-api/`
+4. Inspect memory proposals through the proxied API or notebooks
 
 If you want to use an external Open WebUI instance, configure:
 
-- base URL: `http://localhost:8000/v1`
+- base URL: `http://localhost:8052/vgm-api/v1`
 - API key: any value for the current default local setup
 - model: `vector-graph-memory`
 
-If Open WebUI is on the same Docker network, use `http://api:8000/v1` instead.
+If Open WebUI is on the same Docker network and you want to bypass the proxy, use `http://api:8000/v1` instead.
 
 ## DSPy Synthesis Status
 

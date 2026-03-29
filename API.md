@@ -42,7 +42,7 @@ docker compose up -d
 docker compose logs -f api
 ```
 
-The API will be available at `http://localhost:8000`.
+The default Docker entrypoint is the reverse proxy on `http://localhost:8052`.
 
 Included services:
 
@@ -51,6 +51,7 @@ Included services:
 - MongoDB container
 - API server
 - Open WebUI
+- Nginx reverse proxy
 
 Current limitation:
 
@@ -90,7 +91,7 @@ Note: `start_api.sh` currently checks `OPENAI_API_KEY` from the shell environmen
 2. Go to `Settings -> Connections`.
 3. Add an `OpenAI API` connection with:
    - name: `Vector Graph Memory`
-   - base URL: `http://localhost:8000/v1`
+   - base URL: `http://localhost:8052/vgm-api/v1`
    - API key: any value for the current default setup
 4. Save and select the `vector-graph-memory` model.
 
