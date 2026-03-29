@@ -88,6 +88,19 @@ These instructions apply to the entire repo tree.
 - Keep implementation status, validation status, and acceptance status separate.
 - Do not imply that passing checks proves correctness beyond the scope of those checks.
 
+### Documentation Drift Control
+
+- Treat documentation drift as a real maintenance risk in this repository because AI-generated code and AI-generated docs can diverge while both still appear polished and plausible.
+- For any substantive change to code, configuration, workflows, API behavior, setup steps, or product direction, assess whether existing documentation may now be inaccurate, incomplete, or misleading.
+- Check the most relevant documentation before finishing the task. Typical files include `README.md`, `API.md`, `AGENTS.md`, `.env.example`, workflow documentation, and related files under `docs/`.
+- In the final summary, state whether documentation impact was reviewed and whether any drift was found.
+- If documentation is out of date and the user has authorized documentation changes, update the affected docs in the same change when practical.
+- If documentation appears out of date but the user has not authorized doc edits, do not edit it silently; explicitly report the likely drift and identify the affected files.
+- During review tasks, treat documentation drift as a reportable finding when behavior, setup, contracts, status claims, or roadmap claims no longer match the repository.
+- Keep the drift check active over time, but monitor for noise: do not generate speculative, low-confidence, or low-value documentation warnings on trivial changes.
+- Prefer targeted recommendations tied to concrete impact. Name the specific doc files and the specific behavior or claim that may now be out of alignment.
+- If the change is too small to justify documentation updates, say so briefly instead of manufacturing doc churn.
+
 ## 2) Explicit-Instruction-Only Mode (Mandatory)
 
 - Do not edit, create, rename, or delete any file unless the user explicitly asks for that action.

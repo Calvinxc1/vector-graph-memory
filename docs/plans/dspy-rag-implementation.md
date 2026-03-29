@@ -1,74 +1,88 @@
-# DSPy RAG Implementation Plan
+# DSPy Grounded Synthesis Implementation Plan
 
-This document is the working implementation plan for adding DSPy-backed RAG prompt support to Vector Graph Memory.
+This document is the working implementation plan for the DSPy-backed grounded-answer path in Vector Graph Memory.
+
+This is not the full rules-lawyer plan. It covers the narrower synthesis layer that sits between retrieved context and an answer. The broader rules-lawyer strategy, roadmap, and `SETI` pilot work are tracked in separate planning documents.
 
 Status:
 
-- Partially implemented
-- Phase 1 seam creation is in place
-- A baseline Phase 2 DSPy synthesis path exists behind feature flags
-- Phase 3 eval scaffolding exists as a local SETI rules-reference dataset with tracked rubrics
-- A first Phase 4 compile/cache scaffold exists with local artifact loading and background compile orchestration
-- Scope in this document is limited to answer synthesis over retrieved context
-- Retrieval stays native to Vector Graph Memory
-- Open WebUI feedback is a later optimization input, not a launch dependency
+- partially implemented
+- deterministic `RagContext` seam exists
+- baseline DSPy synthesis path exists behind feature flags
+- local compile and artifact-cache scaffold exists
+- offline evaluation scaffold exists and uses a tracked `SETI` rules-reference fixture
 
-## Goal
+## Purpose
 
-Improve the quality and model-specific behavior of the "retrieved context -> grounded answer" step by introducing a DSPy synthesis layer that can be evaluated, compiled, cached, and rolled out safely.
+The purpose of this plan is to improve the quality and model-specific behavior of the `retrieved context -> grounded answer` step.
 
-This plan does not treat DSPy as the retrieval engine. Vector and graph retrieval remain implemented by Vector Graph Memory.
+The scope of this document is deliberately narrow:
+
+- DSPy is used for synthesis, evaluation, and compilation
+- retrieval remains native to Vector Graph Memory
+- this plan does not define the full game-specific ingestion or rules-lawyer adjudication workflow
+
+## Relationship To The Rules-Lawyer Direction
+
+The repository now has a broader strategic direction around a rules-lawyer product for tabletop games.
+
+That direction depends partly on this DSPy layer, but it should not be collapsed into it:
+
+- this document is about answer synthesis over retrieved context
+- the rules-lawyer work adds canonical rule modeling, precedence, citations, ingestion, and product UX requirements
+- a successful DSPy eval run is useful evidence, but it does not prove the rules-lawyer product is complete
+
+Related planning docs:
+
+- [rules-lawyer-strategy.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-strategy.md)
+- [rules-lawyer-roadmap.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-roadmap.md)
+- [seti-pilot-next-steps.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/seti-pilot-next-steps.md)
 
 ## Current Constraints
 
-The current request path mixes several responsibilities that should be separated before DSPy is introduced:
+The current request path still has structural limitations:
 
-- `src/vgm/api/server.py` flattens multi-turn chat history into a single prompt string before dispatch
-- `src/vgm/MemoryAgent.py` combines answer generation, memory-review prompting, and memory-management tools in one loop
-- Retrieval for answer generation is currently exposed primarily through LLM tools that return formatted text
-- The storage layer already provides structured retrieval primitives through `VectorGraphStore`
+- `src/vgm/api/server.py` is the integration point for the OpenAI-compatible request path
+- `src/vgm/MemoryAgent.py` still owns the memory-oriented tool loop
+- retrieval for the baseline product remains centered on memory-oriented behavior rather than a dedicated ruling engine
+- the storage layer already exposes reusable retrieval primitives through `VectorGraphStore`
 
-These constraints make prompt optimization harder because the synthesis step does not yet have a stable, typed contract.
+These constraints matter because DSPy needs a stable contract if it is going to be tuned and evaluated reliably.
 
 ## Target Architecture
 
-The planned answer path is:
+The intended grounded-answer path is:
 
-1. Receive OpenAI-compatible chat request
-2. Preserve message history and current user question as separate fields
-3. Build deterministic retrieval context using native Vector Graph Memory retrieval
-4. Pass structured retrieval output into a DSPy synthesis module
-5. Return grounded answer and source metadata
-6. Run memory-review logic separately from answer synthesis
+1. receive an OpenAI-compatible chat request
+2. preserve message history and current user question as separate fields
+3. build deterministic retrieval context using native Vector Graph Memory retrieval
+4. pass the structured retrieval payload into a DSPy synthesis module
+5. return grounded answer text and source metadata
+6. keep memory-review behavior separate from synthesis as much as possible
 
-The main internal components should be:
+Main internal components:
 
-- `RagContext` builder:
-  - Normalizes chat history, current question, similar nodes, graph expansions, source IDs, scores, and any retrieval metadata needed by synthesis
-- Baseline DSPy synthesizer:
-  - A non-compiled DSPy module that defines the answer-generation contract before any optimization is attempted
-- Eval and compile manager:
-  - Runs DSPy optimizers against a frozen evaluation set and persists model-specific compiled artifacts
-- Runtime selector:
-  - Chooses baseline or compiled synthesizer based on feature flags and cache availability
-- Trace logger:
-  - Records model ID, retrieval payload, synthesis version, answer, and trace ID for later analysis
+- `RagContext` builder
+- baseline DSPy synthesizer
+- eval and compile manager
+- runtime selector for baseline versus compiled artifacts
+- trace logging for later analysis
 
 ## Scope And Non-Goals
 
-In scope for the first implementation:
+In scope:
 
-- DSPy-based answer synthesis over retrieved context
-- Model-specific compilation and caching
-- Offline evaluation and guarded rollout
-- Feature-flagged API integration
+- DSPy-based grounded answer synthesis over retrieved context
+- model-specific compilation and caching
+- offline evaluation and guarded rollout
+- feature-flagged API integration
 
-Explicitly out of scope for the first implementation:
+Out of scope:
 
-- Replacing vector or graph retrieval with DSPy
-- Full retrieval-planning or multi-hop orchestration in DSPy
-- Using thumbs-up or thumbs-down as the primary optimization metric
-- Blocking first-use chat requests on a full compile
+- replacing vector or graph retrieval with DSPy
+- full retrieval planning or multi-hop orchestration in DSPy
+- declaring the repository already has a complete rules-lawyer pipeline
+- using Open WebUI feedback as a launch dependency
 
 ## Implementation Phases
 
@@ -76,285 +90,214 @@ Explicitly out of scope for the first implementation:
 
 Objective:
 
-- Separate the answer path from the memory-management path so DSPy can target one stable unit of behavior
+- separate answer synthesis from the mixed memory-management loop enough to give DSPy a stable target
 
 Concrete work:
 
-- Introduce a dedicated internal `retrieve -> synthesize` path for answering
-- Preserve chat history as structured messages instead of collapsing everything into one string
-- Build a typed retrieval payload from native store calls
-- Keep the current memory proposal and confirmation workflow intact for now
-
-Expected code direction:
-
-- Add a small RAG-focused package or module namespace, for example `src/vgm/rag/`
-- Move answer-time retrieval assembly out of the mixed `MemoryAgent.run(...)` path
-- Reuse `VectorGraphStore.search_similar_nodes(...)` and graph traversal directly instead of routing answer retrieval through tool-formatted strings
+- introduce a dedicated internal `retrieve -> synthesize` answer path
+- preserve chat history as structured messages instead of flattening everything into one prompt string
+- build a typed retrieval payload from native store calls
+- keep the current memory proposal and confirmation workflow intact
 
 Definition of done:
 
-- The application can build a structured retrieval payload without invoking the current mixed tool loop
-- Answer synthesis has a stable input contract
+- the application can build structured retrieval payloads without depending on the mixed tool-output path
+- answer synthesis has a stable input contract
 
-Phase-specific risks to guard against:
+Current status:
 
-- Memory-review behavior leaking back into the answer path and polluting the synthesis target
-- Over-designing the first `RagContext` schema before the synthesizer proves what data it actually needs
-- Pulling graph traversal in too aggressively and drowning synthesis in low-signal context on day one
+- implemented in initial form
 
 ### Phase 2: Add A Baseline DSPy Synthesizer
 
 Objective:
 
-- Introduce DSPy in the narrowest useful place before any optimization logic is added
+- introduce DSPy in the narrowest useful place before more aggressive optimization
 
 Concrete work:
 
-- Add DSPy as a dependency
-- Create a baseline DSPy module with a clear signature for answer synthesis
-- Feed the module structured retrieval inputs rather than one large context blob
-- Return answer text and source identifiers from the module output
+- define a baseline DSPy module for answer synthesis
+- feed the module structured retrieval inputs
+- return grounded answer text and source identifiers
 
-Suggested signature shape:
+Suggested contract shape:
 
-- Inputs:
+- inputs:
   - `conversation_history`
   - `question`
   - `passages`
   - `graph_facts`
   - `use_case`
-- Outputs:
+- outputs:
   - `answer`
   - `cited_source_ids`
   - `abstain`
 
 Definition of done:
 
-- The API can answer through the baseline DSPy module with no compilation step
-- The baseline path is feature-flagged and can fall back to the current answer path
+- the API can answer through the baseline DSPy module with no compilation step
+- the baseline path is feature-flagged and can fall back safely
 
-Phase-specific risks to guard against:
+Current status:
 
-- Contract drift between `RagContext` and the baseline DSPy signature before the input shape stabilizes
-- Falling back to one giant prompt blob and losing the structured seam created in Phase 1
-- Losing provenance between retrieved evidence and the answer by failing to return or log cited source IDs
-- Reintroducing `MemoryAgent` memory-review behavior into the DSPy synthesis path
-- Weak fallback behavior if DSPy initialization or synthesis fails at runtime
+- implemented in baseline form
 
 ### Phase 3: Build The Evaluation Set And Metric
 
 Objective:
 
-- Create the optimization target before introducing compilation or auto-tuning
+- define the optimization target before relying on compilation results
 
 Concrete work:
 
-- Assemble a small representative evaluation set from the repository's real use cases
-- Freeze retrieval payloads for each example so synthesis is evaluated independently of retrieval drift
-- Capture expected behavior per example:
-  - facts that must be used
-  - facts that must not be invented
-  - expected source usage
-  - expected abstention behavior
-  - format requirements
+- assemble a representative evaluation set
+- freeze retrieval payloads so synthesis can be evaluated independently of retrieval drift
+- encode expected facts, abstention behavior, and citation expectations
 
 Metric priorities:
 
-- Groundedness to retrieved evidence only
-- Correct source attachment or citation behavior
-- Preference for graph-derived facts when relevant
-- Refusal to invent when evidence is weak
-- Output-format compliance
-
-Definition of done:
-
-- There is a repeatable offline eval set for synthesis quality
-- The baseline DSPy module is measured against explicit metrics rather than subjective inspection alone
+- groundedness to retrieved evidence
+- source alignment
+- abstention when evidence is weak
+- output-format compliance
 
 Current implementation note:
 
-- The repository now includes a tracked JSONL rules-reference fixture for `SETI` under `tests/fixtures/rag_eval/`
-- Exact source documents remain local and gitignored; tracked eval cases freeze retrieval by document, page, and locator
-- The repository now defines a v1 single-score contract that weights groundedness highest, followed by abstention correctness, source alignment, and completeness
-- Validation tests check fixture structure in all environments and verify local source locators when the ignored corpus is present
+- the repository includes `tests/fixtures/rag_eval/seti_rules_reference_v1.jsonl`
+- tracked eval cases are currently built around `SETI` rules-reference examples
+- validation tests cover fixture structure and source-locator handling when local ignored source documents are present
+
+Definition of done:
+
+- there is a repeatable offline evaluation set for synthesis quality
+- baseline and candidate programs can be compared on explicit metrics
+
+Current status:
+
+- implemented in initial form
 
 ### Phase 4: Add DSPy Compilation And Artifact Caching
 
 Objective:
 
-- Optimize the synthesis program per model without making startup or first request brittle
+- optimize synthesis per model without making startup or first request brittle
 
 Concrete work:
 
-- Add a compile manager around the DSPy synthesizer
-- Start with `dspy.MIPROv2` for prompt optimization
-- Cache compiled artifacts by:
-  - provider
-  - model ID
-  - model version if available
-  - retrieval schema version
-  - synthesis program version
-- Use the baseline synthesizer immediately for an unseen model
-- Run a short compile in the background for new model configurations
-- Promote a compiled artifact only if it beats the baseline on the eval set
+- compile candidate DSPy programs against the frozen eval suite
+- cache artifacts by model identity and retrieval or program version
+- use baseline synthesis immediately for unseen model identities
+- promote compiled artifacts only when they beat baseline
 
 Runtime policy:
 
-- Do not block normal chat startup on a full compile
-- Do not assume a successful compile implies production readiness
-- Recompile only when the model or retrieval schema changes materially
+- do not block normal chat startup on full compile
+- do not assume successful compile implies production readiness
+- recompile only when the model or schema changes materially
 
 Definition of done:
 
-- Model-specific compiled synthesis artifacts can be created, stored, selected, and reused safely
+- model-specific compiled synthesis artifacts can be created, selected, and reused safely
 
-Current implementation note:
+Current status:
 
-- The repository now persists local proof-run logs under `.vgm/dspy_runs/`
-- The SETI rules-reference eval suite currently contains `30` cases with separate `standard` and `hard_mode` bucket reporting
-- A live proof run with `openai:gpt-5.4-nano` as the synthesis model and `openai:gpt-5.4` as the judge currently scores:
-  - overall total `0.9683`
-  - `hard_mode` total `0.9880`
-  - `standard` total `0.9585`
-- The current compiled candidate still ties baseline on the harder suite, so promotion remains correctly blocked
-- Best restart point for later work: inspect the `hard_mode` traces and improve the compile search space or synthesis prompt before adding more infrastructure
+- scaffold exists
+- promotion is still intentionally conservative
 
-### Phase 5: Integrate Into The API Behind A Feature Flag
+### Phase 5: Integrate Into The API Behind Feature Flags
 
 Objective:
 
-- Roll out the new answer path without breaking the current API behavior
+- roll out the DSPy path without breaking the existing memory-oriented API
 
 Concrete work:
 
-- Add feature flags or configuration toggles for DSPy-backed synthesis
-- Update the OpenAI-compatible chat endpoint to:
-  - preserve structured history
-  - build retrieval context
-  - call the selected synthesizer
-  - attach any source metadata needed for tracing
-- Keep a clean fallback to the current path during rollout
+- add feature flags for the DSPy synthesis path
+- update the OpenAI-compatible chat endpoint to preserve structured history, build retrieval context, call the selected synthesizer, and fall back explicitly when needed
 
 Definition of done:
 
-- The API can serve either the current path or the DSPy-backed path deterministically
-- Fallback behavior is explicit and testable
+- the API can serve either the baseline path or the DSPy-backed path deterministically
+- fallback behavior is explicit and testable
+
+Current status:
+
+- partially implemented
 
 ### Phase 6: Separate Memory Review From Answer Synthesis
 
 Objective:
 
-- Prevent memory-proposal behavior from contaminating the synthesis optimization target
+- prevent memory-review behavior from contaminating the synthesis optimization target
 
 Concrete work:
 
-- Remove the current pattern where memory-review instructions are injected into every answer turn under `ai_determined`
-- Treat memory review as a second pass or separate internal component
-- Keep user-confirmed memory proposal behavior unchanged from the user's perspective
+- remove the current pattern where memory-review guidance is injected into every turn under `ai_determined`
+- treat memory review as a separate internal concern from answer synthesis
 
 Definition of done:
 
-- Answer synthesis can be tuned independently from memory-management behavior
+- answer synthesis can be tuned independently from memory-management behavior
 
-### Phase 7: Add Trace Logging For Future Feedback Loops
+Current status:
+
+- not complete
+
+### Phase 7: Add Better Trace Logging
 
 Objective:
 
-- Capture the metadata needed to evaluate future prompt variants and connect them to user feedback later
+- preserve enough run data to inspect regressions, compare compiled artifacts, and support future feedback loops
 
 Concrete work:
 
-- Log:
-  - trace ID
-  - model ID
-  - retrieval payload summary or source IDs
-  - synthesis program version
-  - whether the baseline or compiled path was used
-  - answer text or answer digest
-- Keep the trace shape stable enough to join with external feedback later
+- record model ID, retrieval payload metadata, synthesis version, answer text, source IDs, and trace identifiers
+- make proof-run artifacts easy to inspect locally
 
 Definition of done:
 
-- Each answer can be tied back to the exact synthesis path and prompt-program version used
+- local proof runs and production-like traces are inspectable enough to debug synthesis regressions
 
-### Phase 8: Explore Open WebUI Feedback As A Weak Signal
+Current status:
 
-Objective:
+- partial support exists through local run logging
 
-- Use Open WebUI feedback to improve prompts carefully, without overfitting to noisy thumbs data
+## Current Risks
 
-Concrete work:
+Main risks for this DSPy path:
 
-- Investigate how reliably Open WebUI feedback can be exported or joined to backend traces
-- Treat thumbs-up, thumbs-down, ratings, and text comments as weak labels only
-- Use feedback to prioritize examples for review and dataset expansion
-- Avoid direct optimization on raw thumbs alone
+- contract drift between `RagContext` and the DSPy module
+- overfitting to the current `SETI` eval fixture
+- treating answer quality metrics as a substitute for full adjudication quality
+- allowing memory-review behavior to pollute synthesis evaluation
+- assuming compiled artifacts imply acceptance readiness
 
-Why this is later:
+## Validation Status
 
-- Negative feedback may reflect retrieval quality, latency, formatting, or user preference rather than synthesis prompt quality
-- Prompt tuning should first rest on an explicit offline eval set
+What has been validated:
 
-Definition of done:
+- the repository contains tests for the DSPy context, synthesis, evaluation, compile-manager, and API integration seams
+- the tracked eval fixture exists and is exercised by tests
 
-- Feedback is available as an analysis input for future dataset growth and retraining decisions
+What remains unvalidated at the broader product level:
 
-## Configuration Changes Expected
+- full rules-lawyer output contracts
+- game-specific ingestion quality
+- graph-backed precedence reasoning for real adjudication flows
+- local-model viability for the end-user rules-lawyer experience
 
-The implementation will likely need new configuration separate from the current memory settings, for example:
+## Next Practical Steps
 
-- `RAG_SYNTHESIS_BACKEND`
-- `RAG_DSPY_ENABLED`
-- `RAG_DSPY_COMPILE_ON_START`
-- `RAG_DSPY_CACHE_DIR`
-- `RAG_DSPY_PROGRAM_VERSION`
-- `RAG_RETRIEVAL_SCHEMA_VERSION`
+For this DSPy plan specifically, the next high-value work is:
 
-Exact names are not final and should be chosen during implementation.
+1. keep the synthesis contract narrow and stable
+2. avoid mixing rules-lawyer ambitions into the synthesis layer prematurely
+3. use the `SETI` fixture to improve grounded synthesis while the separate `SETI` pilot work defines canonical rule modeling
+4. tighten traceability between retrieved evidence and generated outputs
 
-## Validation Plan
+That separation matters. The repository needs both:
 
-Low-risk validation:
+- a sound synthesis layer
+- a sound rules-lawyer architecture
 
-- Unit tests for retrieval-context assembly
-- Unit tests for feature-flag and cache-selection behavior
-- Basic serialization tests for compiled-artifact metadata
-
-Moderate-risk validation:
-
-- Offline eval comparison between baseline and compiled synthesizers
-- Manual smoke testing through the OpenAI-compatible API
-- Manual Open WebUI verification for answer quality and regression checks
-
-High-risk validation before broader rollout:
-
-- Repeated eval runs across more than one target model
-- Failure-mode testing for missing caches, compile failures, and fallback selection
-- Verification that memory proposal behavior is unchanged when DSPy synthesis is enabled
-
-## Order Of Implementation
-
-Recommended execution order:
-
-1. Build the retrieval-context seam
-2. Add the baseline DSPy synthesizer
-3. Create the frozen evaluation set and metric
-4. Add compilation and model-specific caching
-5. Integrate the new answer path behind a feature flag
-6. Separate memory review from answer synthesis
-7. Add trace logging
-8. Explore Open WebUI feedback as a later optimization signal
-
-## Assumptions
-
-- The first target is answer synthesis only, not retrieval replacement
-- The selected LLM may change across environments, so model-specific compilation is useful
-- The first implementation should optimize reliability and observability before optimization depth
-- Open WebUI feedback is useful, but not reliable enough to be the only quality signal
-
-## Remaining Open Questions
-
-- Where compiled DSPy artifacts should be stored in local and containerized deployments
-- Whether source IDs should be surfaced in the OpenAI-compatible response immediately or only logged internally
-- How retrieval payloads should represent graph traversals for synthesis without overloading token budgets
-- Which evaluation examples best represent the intended primary use cases for this repository
+They are related, but they are not the same task.

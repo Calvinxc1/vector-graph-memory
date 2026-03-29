@@ -1,0 +1,22 @@
+{
+  "seed_id": "seti_landing_orbiter_seed_v1",
+  "game_id": "seti",
+  "scope": "rules_only",
+  "subsystem": "landing_and_orbiter_interactions",
+  "project_id": "seti_rules_lawyer",
+  "source": "manual_seed:seti_landing_orbiter_seed_v1",
+  "node_count": 14,
+  "edge_count": 15,
+  "node_file": "tests/fixtures/rag_eval/seti_landing_orbiter_seed_v1_nodes.jsonl",
+  "edge_file": "tests/fixtures/rag_eval/seti_landing_orbiter_seed_v1_edges.jsonl",
+  "related_docs": [
+    "docs/plans/seti-landing-orbiter-subsystem-brief.md",
+    "docs/plans/seti-landing-orbiter-manual-seed-spec.md"
+  ],
+  "frozen_questions": [
+    "Can an orbiter later land on the same planet?",
+    "Does an opponent's orbiter still reduce my landing cost?",
+    "Does an existing orbiter also reduce the cost to land on that planet's moon?",
+    "If another player's orbiter is at Jupiter and I have the tech that lets me land on moons, do I get the discount when landing on one of Jupiter's moons?"
+  ]
+}

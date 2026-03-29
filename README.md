@@ -1,95 +1,138 @@
 # Vector Graph Memory
 
-Vector Graph Memory is a hybrid vector-graph backend for AI agents that need persistent memory across long-running sessions and multi-step workflows.
+Vector Graph Memory is a hybrid vector-plus-graph backend for AI systems that need retrieval over both semantic similarity and explicit relationships.
 
-It combines semantic retrieval from a vector store with relationship traversal in a graph database so an agent can both find relevant starting points and navigate connected context.
+Today, this repository is still primarily an experimental memory system. The current strategic direction is to reuse that substrate for a rules-lawyer product focused on complex tabletop games, but that layer is still in planning and pilot work.
 
-## What This Repo Is
+## What Exists Today
 
-This repository currently contains:
+The repository currently contains:
 
-- A Python library for storing and retrieving memory in a combined Qdrant + JanusGraph backend
-- An OpenAI-compatible REST API built with FastAPI
-- A PydanticAI-based memory agent with proposal-and-confirmation workflows
+- a Python library for storing and retrieving nodes and typed edges in a combined Qdrant plus JanusGraph backend
+- an OpenAI-compatible REST API built with FastAPI
+- a PydanticAI-based memory agent with proposal and confirmation workflows
 - Docker-based local development infrastructure, including Open WebUI
+- a DSPy-backed grounded-answer synthesis path behind feature flags
+- a local evaluation fixture built around `SETI` rules-reference cases for the DSPy synthesis path
 
-The project started around professional networking and job-search tracking, but the underlying storage model is intended to be general-purpose.
+The package metadata still reflects the currently implemented system:
 
-## How It Works
+- package name: `vector-graph-memory`
+- package version: `0.1.0`
+- package description: hybrid vector-graph backend for AI agents with persistent memory
+
+## Current Product Position
+
+There are two distinct layers in this repo and they should not be conflated.
+
+Implemented now:
+
+- hybrid storage and traversal substrate
+- memory-oriented chat API
+- memory proposal and confirmation flow
+- JSONL audit logging
+- Dockerized local stack with Open WebUI
+- feature-flagged DSPy synthesis and compile scaffolding
+
+Planned or in-progress direction:
+
+- VGM Rules Lawyer, a retrieval-first adjudication system for board-game rules
+- structured ruling outputs with citation chains and precedence order
+- game-specific ingestion and graph construction, starting with a `SETI` pilot
+- local-model validation for constrained rules-reference tasks
+
+If you are evaluating the repository as software, treat the memory substrate as the implemented product and the rules-lawyer work as a planned layer under active design.
+
+## How The Substrate Works
 
 The system splits responsibilities across two storage layers:
 
-- Qdrant stores embeddings, full content, and node metadata
-- JanusGraph stores node references and relationships for traversal
+- Qdrant stores embeddings, content, and node metadata
+- JanusGraph stores node references and typed relationships for traversal
 
-Typical query flow:
+Typical retrieval flow:
 
 1. A user or agent submits a natural-language request.
 2. Vector search finds semantically relevant nodes.
-3. Graph traversal expands outward from those nodes.
-4. The agent uses the resulting context to answer or propose memory operations.
+3. Graph traversal expands outward from those starting points.
+4. The application uses the resulting context for answer synthesis or memory operations.
 
-The current data model is centered on:
+Current core data concepts:
 
-- Nodes: content-bearing entities with embeddings
-- Edges: typed relationships between nodes
-- Audit entries: records of memory operations
+- nodes: content-bearing entities with embeddings and metadata
+- edges: typed relationships between nodes
+- audit entries: records of memory operations
 
-## AI Usage
+## Rules-Lawyer Direction
 
-This repository is intentionally maintained as a fully vibe-coded, 100% AI-generated codebase under human direction.
+The near-term strategic direction is to adapt this substrate into a rules-lawyer system for complex tabletop games.
 
-This is a personal experiment for this repository specifically. It is not representative of the normal development model used across the maintainer's other repositories.
+The intended product shape is:
 
-All substantive code, documentation, and workflow changes may be produced by coding agents. Human oversight remains responsible for validation, acceptance, and release decisions.
+- retrieve rules rather than generate unsupported answers
+- treat citations as structural outputs attached from node metadata
+- expose rule hierarchy and precedence order explicitly
+- constrain the LLM to identifying, ranking, and formatting relevant rules
+- deploy fully locally through Docker and Open WebUI on modest hardware
 
-Because of that operating model, the repo policy emphasizes explicit validation, skepticism toward existing implementation patterns, and stronger review discipline for agent-generated changes.
+Current target game progression:
 
-## Current State
+1. `SETI`
+2. `Arkham Horror LCG`
+3. `Stellar Horizons`
+4. `Magic: The Gathering`
 
-This project is pre-1.0. The authoritative repository version is the package version in `pyproject.toml`, which is currently `0.1.0`.
+Roadmap and planning documents:
 
-The repo is usable, but it should be treated as an experimental implementation rather than a stable `1.0` release.
+- [rules-lawyer-strategy.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-strategy.md)
+- [rules-lawyer-roadmap.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-roadmap.md)
+- [seti-pilot-next-steps.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/seti-pilot-next-steps.md)
+
+## Current State And Known Gaps
+
+This project is pre-1.0 and should be treated as experimental.
 
 What works today:
 
-- Hybrid vector-graph storage
+- hybrid vector-graph storage
 - OpenAI-compatible chat API
-- Memory proposal and confirmation flow
+- memory proposal and confirmation flow
 - JSONL audit logging
 - Dockerized local stack
 - Open WebUI integration
+- feature-flagged DSPy synthesis seam and compile manager scaffold
 
-What is still incomplete or partially implemented:
+What is incomplete or only partially implemented:
 
-- MongoDB audit logging is intended, but API startup does not yet wire MongoDB audit configuration end-to-end.
-- Local API startup via `./start_api.sh` requires `OPENAI_API_KEY` to already be exported in the shell; the script does not currently source `.env`.
+- MongoDB audit logging is intended, but API startup does not yet wire MongoDB audit configuration end to end.
+- Local API startup via `./start_api.sh` requires `OPENAI_API_KEY` to already be exported in the shell and does not source `.env`.
 - `ai_determined` trigger mode currently injects memory-review guidance on every turn rather than selectively deciding when to review.
 - `GET /memory/audit/{session_id}` accepts `limit`, but session-scoped audit queries do not currently enforce that limit.
-- JanusGraph schema initialization is still manual for local library and local API usage outside the default Dockerized path.
+- JanusGraph schema initialization is still manual for local library and local API use outside the default Dockerized path.
+- The rules-lawyer layer is not yet an implemented end-user product path.
 
 ## Architecture
 
-- Type: Python library plus OpenAI-compatible REST API
-- Runtime Python: 3.11+
-- Current CI and local dev target: Python 3.14
-- Vector database: Qdrant
-- Graph database: JanusGraph
-- Agent framework: PydanticAI
+- type: Python library plus OpenAI-compatible REST API
+- runtime Python: `3.11+`
+- current local-dev and CI target: Python `3.14`
+- vector database: Qdrant
+- graph database: JanusGraph
+- agent framework: PydanticAI
 - API framework: FastAPI
-- Prompt-synthesis layer: DSPy-backed answer synthesis is available behind feature flags, and a first local compile/cache scaffold now exists for model-specific prompt optimization; retrieval logic remains native to Vector Graph Memory
+- prompt-synthesis layer: DSPy-backed grounded answer synthesis behind feature flags
 
 ## Development Setup
 
 ### Prerequisites
 
 - Docker and Docker Compose
-- Python 3.11+ runtime
+- Python `3.11+`
 - `uv` for local development workflows
 
 ### Quick Start: API Stack
 
-This is the recommended path for trying the project.
+This is the recommended path for trying the repository as it exists today.
 
 ```bash
 # 1. Configure environment
@@ -103,7 +146,7 @@ docker compose up -d
 curl http://localhost:8000/v1/models
 ```
 
-This starts the default local stack, including:
+This starts:
 
 - Qdrant
 - JanusGraph
@@ -116,7 +159,7 @@ Endpoints:
 - API: `http://localhost:8000`
 - Open WebUI: `http://localhost:3000`
 
-Note: MongoDB is part of the compose stack, but MongoDB-backed audit logging is not yet fully wired in the application runtime. JSONL is the currently working audit backend.
+Note: MongoDB is included in Compose, but JSONL is still the currently working audit backend.
 
 ### Quick Start: Python Library
 
@@ -127,24 +170,24 @@ If you want to work with the library directly instead of the API:
 docker compose up -d qdrant janusgraph
 
 # 2. Initialize JanusGraph schema once
-python scripts/init_janusgraph_schema.py
+uv run python scripts/init_janusgraph_schema.py
 
 # 3. Install the package
-pip install -e .
+uv pip install -e .
 
 # 4. Explore usage examples
-jupyter notebook
+uv run jupyter notebook
 ```
 
 Use `playground.ipynb` for direct library examples.
 
-## Local API Development
+### Local API Development
 
 To run the API outside Docker while keeping the databases in Docker:
 
 ```bash
 # 1. Install API dependencies
-pip install -e ".[api]"
+uv pip install -e ".[api]"
 
 # 2. Configure environment
 cp .env.example .env
@@ -153,7 +196,7 @@ cp .env.example .env
 docker compose up -d qdrant janusgraph
 
 # 4. Initialize JanusGraph schema once
-python scripts/init_janusgraph_schema.py
+uv run python scripts/init_janusgraph_schema.py
 
 # 5. Export your API key in the current shell
 export OPENAI_API_KEY=sk-...
@@ -162,46 +205,81 @@ export OPENAI_API_KEY=sk-...
 ./start_api.sh
 ```
 
-Important caveat: `start_api.sh` currently validates `OPENAI_API_KEY` from the shell environment before startup. It does not automatically load `.env`.
+Important caveat: `start_api.sh` does not currently source `.env`.
 
 ## Open WebUI Integration
 
-The easiest way to test the API interactively is through the included Open WebUI container started by the default compose stack.
+The easiest way to test the API interactively is through the included Open WebUI container started by the default Compose stack.
 
 Once the stack is running:
 
 1. Open `http://localhost:3000`
-2. Start chatting with the configured model
-3. Let the agent propose memory additions
-4. Confirm proposals through the API endpoints or notebook examples
+2. Add or use the configured OpenAI-compatible connection
+3. Chat with the `vector-graph-memory` model
+4. Inspect memory proposals through the API or notebooks
 
-If you want to use an external Open WebUI instance, configure an OpenAI-compatible connection with:
+If you want to use an external Open WebUI instance, configure:
 
-- Base URL: `http://localhost:8000/v1`
+- base URL: `http://localhost:8000/v1`
 - API key: any value for the current default local setup
-- Model: `vector-graph-memory`
+- model: `vector-graph-memory`
 
 If Open WebUI is on the same Docker network, use `http://api:8000/v1` instead.
 
-## Notebooks And Docs
+## DSPy Synthesis Status
 
-- `playground_api.ipynb`: examples using the REST API
-- `playground.ipynb`: examples using the Python library directly
-- `API.md`: API-specific setup, endpoints, and implementation caveats
-- `docs/plans/dspy-rag-implementation.md`: phased implementation plan for DSPy-backed RAG synthesis
+The repository includes a DSPy-backed synthesis seam behind feature flags.
 
-## Roadmap
+What it currently does:
 
-Near-term work still expected in this repo:
+- builds a deterministic `RagContext`
+- routes answer synthesis through a baseline DSPy module when enabled
+- supports local compile and artifact caching for exact model identities
+- evaluates against the tracked `SETI` rules-reference fixture
 
-- Temporal tracking and recency scoring
-- Memory consolidation and duplicate handling improvements
-- Stronger graph traversal patterns
-- Expand the baseline DSPy-backed RAG synthesis path into model-specific tuning and compilation
-- Exploration of Open WebUI feedback signals to improve system directives and RAG synthesis prompts over time
-- Completing MongoDB audit support
-- Better validation coverage and tests
+What it does not yet mean:
+
+- the repo does not yet ship a complete rules-lawyer product flow
+- the DSPy path is still grounded-answer infrastructure, not a full ruling engine
+- successful eval runs do not by themselves validate the future game-specific ingestion pipeline
+
+See [dspy-rag-implementation.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/dspy-rag-implementation.md) for the implementation plan.
+
+## Docs
+
+- [API.md](/home/jcherry/Documents/storage/git/vector-graph-memory/API.md): current API behavior, setup, and caveats
+- [dspy-rag-implementation.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/dspy-rag-implementation.md): DSPy synthesis implementation plan
+- [rules-lawyer-strategy.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-strategy.md): product strategy for the rules-lawyer direction
+- [rules-lawyer-roadmap.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-roadmap.md): staged game roadmap
+- [seti-pilot-next-steps.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/seti-pilot-next-steps.md): immediate `SETI` pilot plan
+
+## Near-Term Development Priorities
+
+Near-term work in this repo now falls into two buckets.
+
+Substrate work:
+
+- stronger graph traversal patterns
+- memory consolidation and duplicate handling improvements
+- completion of MongoDB audit support
+- better validation coverage and tests
+
+Rules-lawyer work:
+
+- choose and freeze the first `SETI` subsystem
+- define the pilot rule schema and ruling output contract
+- build a manual ground-truth graph slice
+- validate automated extraction against that slice
+- test constrained outputs on local models
+
+## AI Usage
+
+This repository is intentionally maintained as a fully AI-generated codebase under human direction.
+
+That operating model is specific to this repository. Human review remains responsible for validation, acceptance, and release decisions.
+
+Because of that, existing code and documentation should be treated as potentially polished but wrong. Validation matters more than precedent here.
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+See [LICENSE](/home/jcherry/Documents/storage/git/vector-graph-memory/LICENSE) for details.

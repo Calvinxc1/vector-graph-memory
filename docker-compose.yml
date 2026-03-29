@@ -1,6 +1,6 @@
 services:
   qdrant:
-    image: qdrant/qdrant:${QDRANT_VERSION:-latest}
+    image: qdrant/qdrant:${QDRANT_VERSION:-v1.17.1}
     container_name: ${QDRANT_CONTAINER_NAME:-vector-graph-qdrant}
     expose:
       - "6333"  # HTTP API (internal only)

@@ -415,13 +415,16 @@ class VectorGraphStore:
         Returns:
             Edge ID (UUID)
         """
-        # Build Gremlin query to add edge
-        # Use generic "relationship" label, store actual type as property
-        # Use iterate() to avoid returning the edge (avoids serialization issues)
+        # Build Gremlin query to add edge.
+        # Use generic "relationship" label and store actual type as a property.
+        # The `to(...)` form requires an anonymous child traversal on JanusGraph,
+        # so use `as()/addE()/to(select())` to keep the query server-compatible.
         gremlin_query = (
             f"g.V().has('node_id', '{self._escape_gremlin_value(metadata.from_node_id)}')"
-            f".addE('relationship')"
-            f".to(g.V().has('node_id', '{self._escape_gremlin_value(metadata.to_node_id)}'))"
+            f".as('from_node')"
+            f".V().has('node_id', '{self._escape_gremlin_value(metadata.to_node_id)}')"
+            f".as('to_node')"
+            f".addE('relationship').from('from_node').to('to_node')"
             f".property('edge_id', '{self._escape_gremlin_value(metadata.edge_id)}')"
             f".property('relationship_type', '{self._escape_gremlin_value(metadata.relationship_type)}')"
             f".property('description', '{self._escape_gremlin_value(metadata.description)}')"
@@ -430,7 +433,7 @@ class VectorGraphStore:
             f".property('project_id', '{self._escape_gremlin_value(metadata.project_id)}')"
         )
         if metadata.confidence is not None:
-            gremlin_query += f".property('confidence', {metadata.confidence})"
+            gremlin_query += f".property('confidence', {float(metadata.confidence)}d)"
         for key, value in metadata.custom_metadata.items():
             gremlin_query += f".property('{self._escape_gremlin_value(key)}', '{self._escape_gremlin_value(value)}')"
         gremlin_query += ".iterate()"
