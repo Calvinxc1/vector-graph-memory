@@ -3,11 +3,12 @@
 import asyncio
 import os
 import logging
-from typing import Dict, List, Optional, Literal, cast
+from typing import Any, Dict, List, Optional, Literal, cast
 from datetime import datetime
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from gremlin_python.driver import client as gremlin_client  # type: ignore[import-untyped]
@@ -32,6 +33,12 @@ from ..rag import (
     build_evaluation_policy_key,
     build_dspy_lm,
     normalize_dspy_model_name,
+)
+from ..rules import (
+    LivePilotRulingEngine,
+    LivePilotRulingInspection,
+    RulesRulingRequest,
+    RulesRulingResult,
 )
 
 
@@ -116,6 +123,7 @@ class AppState:
     rag_synthesis_enabled: bool = False
     rag_compile_manager: Optional[DspyCompileManager] = None
     rag_compile_task: Optional[asyncio.Task[None]] = None
+    rules_ruling_engine: Optional[LivePilotRulingEngine] = None
     qdrant: Optional[QdrantClient] = None
     janus: Optional[gremlin_client.Client] = None
     session_proposals: Dict[str, List[str]] = {}  # session_id -> list of proposal_ids
@@ -126,6 +134,249 @@ logger = logging.getLogger(__name__)
 
 
 _TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
+
+
+_QDRANT_INSPECTOR_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Qdrant Inspector</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root { color-scheme: light; --bg: #f5f3ef; --panel: #fffdf8; --ink: #1f2421; --muted: #66706b; --accent: #0d5c63; --line: #d8d3c9; }
+    body { margin: 0; font-family: "IBM Plex Sans", "Segoe UI", sans-serif; background: linear-gradient(180deg, #f7f4ec 0%%, #eef3f2 100%%); color: var(--ink); }
+    main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+    h1, h2 { margin: 0 0 12px; }
+    p { color: var(--muted); }
+    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.04); }
+    label { display: block; font-size: 0.9rem; color: var(--muted); margin-bottom: 6px; }
+    input, select, button { width: 100%%; box-sizing: border-box; font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: white; }
+    button { background: var(--accent); color: white; border: none; cursor: pointer; font-weight: 600; }
+    button.secondary { background: #e7efee; color: var(--accent); border: 1px solid #bdd5d2; }
+    .actions { display: flex; gap: 10px; margin-top: 14px; }
+    .actions a { flex: 1; text-decoration: none; }
+    pre { background: #182022; color: #f4f7f6; padding: 14px; border-radius: 12px; overflow: auto; min-height: 220px; }
+    table { width: 100%%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    code { font-family: "IBM Plex Mono", monospace; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="panel">
+      <h1>Qdrant Inspector</h1>
+      <p>Use the raw Qdrant dashboard for the full vendor UI, or inspect live collections and points directly here.</p>
+      <div class="actions">
+        <a href="./ui/dashboard/" target="_blank" rel="noreferrer"><button type="button">Open Raw Qdrant Dashboard</button></a>
+        <a href="./api/collections" target="_blank" rel="noreferrer"><button class="secondary" type="button">Open Collections JSON</button></a>
+      </div>
+    </div>
+    <div class="grid" style="margin-top: 16px;">
+      <section class="panel">
+        <h2>Collections</h2>
+        <table>
+          <thead><tr><th>Name</th><th>Points</th><th>Vectors</th></tr></thead>
+          <tbody id="collection-table"></tbody>
+        </table>
+      </section>
+      <section class="panel">
+        <h2>Scroll Points</h2>
+        <label for="collection-select">Collection</label>
+        <select id="collection-select"></select>
+        <label for="point-limit" style="margin-top: 12px;">Limit</label>
+        <input id="point-limit" type="number" min="1" max="100" value="10">
+        <div class="actions">
+          <button type="button" id="load-points">Load Points</button>
+        </div>
+      </section>
+    </div>
+    <section class="panel" style="margin-top: 16px;">
+      <h2>Output</h2>
+      <pre id="output">Loading collections...</pre>
+    </section>
+  </main>
+  <script>
+    const tableBody = document.getElementById("collection-table");
+    const collectionSelect = document.getElementById("collection-select");
+    const output = document.getElementById("output");
+
+    async function loadCollections() {
+      const response = await fetch("./api/collections");
+      const data = await response.json();
+      tableBody.innerHTML = "";
+      collectionSelect.innerHTML = "";
+      for (const item of data.collections) {
+        const row = document.createElement("tr");
+        row.innerHTML = `<td><code>${item.name}</code></td><td>${item.points_count ?? ""}</td><td>${item.vectors_count ?? ""}</td>`;
+        tableBody.appendChild(row);
+        const option = document.createElement("option");
+        option.value = item.name;
+        option.textContent = item.name;
+        collectionSelect.appendChild(option);
+      }
+      output.textContent = JSON.stringify(data, null, 2);
+    }
+
+    async function loadPoints() {
+      const collection = collectionSelect.value;
+      const limit = Number(document.getElementById("point-limit").value || "10");
+      const response = await fetch(`./api/collections/${encodeURIComponent(collection)}/points?limit=${limit}`);
+      output.textContent = JSON.stringify(await response.json(), null, 2);
+    }
+
+    document.getElementById("load-points").addEventListener("click", loadPoints);
+    loadCollections().catch((error) => {
+      output.textContent = `Failed to load collections: ${error}`;
+    });
+  </script>
+</body>
+</html>
+"""
+
+
+_JANUS_INSPECTOR_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>JanusGraph Inspector</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root { color-scheme: light; --bg: #f7f2eb; --panel: #fffdfa; --ink: #1e2328; --muted: #66707a; --accent: #aa3a2b; --line: #ddd4ca; }
+    body { margin: 0; font-family: "IBM Plex Sans", "Segoe UI", sans-serif; background: radial-gradient(circle at top right, #f8e5da, transparent 30%%), linear-gradient(180deg, #f8f3ed 0%%, #eef2f0 100%%); color: var(--ink); }
+    main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+    h1, h2 { margin: 0 0 12px; }
+    p { color: var(--muted); }
+    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.04); }
+    label { display: block; font-size: 0.9rem; color: var(--muted); margin-bottom: 6px; }
+    input, select, button { width: 100%%; box-sizing: border-box; font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: white; }
+    button { background: var(--accent); color: white; border: none; cursor: pointer; font-weight: 600; }
+    pre { background: #182022; color: #f4f7f6; padding: 14px; border-radius: 12px; overflow: auto; min-height: 240px; }
+    .actions { display: flex; gap: 10px; margin-top: 14px; }
+    .summary { display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .metric { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: #fff; }
+    .metric strong { display: block; font-size: 1.4rem; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="panel">
+      <h1>JanusGraph Inspector</h1>
+      <p>This page queries the live Gremlin graph through the API process so you can inspect vertices, edges, and seed metadata without exposing raw Gremlin directly in the browser.</p>
+    </div>
+    <div class="panel" style="margin-top: 16px;">
+      <h2>Summary</h2>
+      <div class="summary">
+        <div class="metric">Vertices<strong id="vertex-count">-</strong></div>
+        <div class="metric">Edges<strong id="edge-count">-</strong></div>
+        <div class="metric">Recent Sample<strong id="sample-count">10</strong></div>
+      </div>
+    </div>
+    <div class="grid" style="margin-top: 16px;">
+      <section class="panel">
+        <h2>Vertices</h2>
+        <label for="vertex-property">Property</label>
+        <select id="vertex-property">
+          <option value="node_id">node_id</option>
+          <option value="logical_node_id">logical_node_id</option>
+          <option value="seed_id">seed_id</option>
+          <option value="project_id">project_id</option>
+        </select>
+        <label for="vertex-value" style="margin-top: 12px;">Value</label>
+        <input id="vertex-value" type="text" placeholder="Exact match value">
+        <label for="vertex-limit" style="margin-top: 12px;">Limit</label>
+        <input id="vertex-limit" type="number" min="1" max="100" value="10">
+        <div class="actions">
+          <button type="button" id="sample-vertices">Sample Vertices</button>
+          <button type="button" id="search-vertices">Search Vertices</button>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>Edges</h2>
+        <label for="edge-property">Property</label>
+        <select id="edge-property">
+          <option value="edge_id">edge_id</option>
+          <option value="logical_edge_id">logical_edge_id</option>
+          <option value="seed_id">seed_id</option>
+          <option value="relationship_type">relationship_type</option>
+          <option value="project_id">project_id</option>
+        </select>
+        <label for="edge-value" style="margin-top: 12px;">Value</label>
+        <input id="edge-value" type="text" placeholder="Exact match value">
+        <label for="edge-limit" style="margin-top: 12px;">Limit</label>
+        <input id="edge-limit" type="number" min="1" max="100" value="10">
+        <div class="actions">
+          <button type="button" id="sample-edges">Sample Edges</button>
+          <button type="button" id="search-edges">Search Edges</button>
+        </div>
+      </section>
+    </div>
+    <section class="panel" style="margin-top: 16px;">
+      <h2>Output</h2>
+      <pre id="output">Loading graph summary...</pre>
+    </section>
+  </main>
+  <script>
+    const output = document.getElementById("output");
+
+    async function loadSummary() {
+      const response = await fetch("./api/summary");
+      const data = await response.json();
+      document.getElementById("vertex-count").textContent = data.vertex_count;
+      document.getElementById("edge-count").textContent = data.edge_count;
+      output.textContent = JSON.stringify(data, null, 2);
+    }
+
+    async function sampleVertices() {
+      const limit = Number(document.getElementById("vertex-limit").value || "10");
+      const response = await fetch(`./api/vertices?limit=${limit}`);
+      output.textContent = JSON.stringify(await response.json(), null, 2);
+    }
+
+    async function searchVertices() {
+      const property = document.getElementById("vertex-property").value;
+      const value = document.getElementById("vertex-value").value;
+      const limit = Number(document.getElementById("vertex-limit").value || "10");
+      const response = await fetch(`./api/vertices/search?property=${encodeURIComponent(property)}&value=${encodeURIComponent(value)}&limit=${limit}`);
+      output.textContent = JSON.stringify(await response.json(), null, 2);
+    }
+
+    async function sampleEdges() {
+      const limit = Number(document.getElementById("edge-limit").value || "10");
+      const response = await fetch(`./api/edges?limit=${limit}`);
+      output.textContent = JSON.stringify(await response.json(), null, 2);
+    }
+
+    async function searchEdges() {
+      const property = document.getElementById("edge-property").value;
+      const value = document.getElementById("edge-value").value;
+      const limit = Number(document.getElementById("edge-limit").value || "10");
+      const response = await fetch(`./api/edges/search?property=${encodeURIComponent(property)}&value=${encodeURIComponent(value)}&limit=${limit}`);
+      output.textContent = JSON.stringify(await response.json(), null, 2);
+    }
+
+    document.getElementById("sample-vertices").addEventListener("click", sampleVertices);
+    document.getElementById("search-vertices").addEventListener("click", searchVertices);
+    document.getElementById("sample-edges").addEventListener("click", sampleEdges);
+    document.getElementById("search-edges").addEventListener("click", searchEdges);
+    loadSummary().catch((error) => {
+      output.textContent = `Failed to load summary: ${error}`;
+    });
+  </script>
+</body>
+</html>
+"""
+
+
+_JANUS_VERTEX_PROPERTIES = {"node_id", "logical_node_id", "seed_id", "project_id"}
+_JANUS_EDGE_PROPERTIES = {
+    "edge_id",
+    "logical_edge_id",
+    "seed_id",
+    "relationship_type",
+    "project_id",
+}
 
 
 # --- Lifecycle management ---
@@ -145,7 +396,7 @@ async def lifespan(_app: FastAPI):
 
     # Connect to databases
     qdrant_host = os.getenv("QDRANT_HOST", "localhost")
-    qdrant_port = int(os.getenv("QDRANT_HTTP_PORT", "6333"))
+    qdrant_port = int(os.getenv("QDRANT_HTTP_PORT", "8111"))
     janusgraph_host = os.getenv("JANUSGRAPH_HOST", "localhost")
     janusgraph_port = int(os.getenv("JANUSGRAPH_PORT", "8182"))
 
@@ -228,6 +479,10 @@ async def lifespan(_app: FastAPI):
             store=state.agent.store,
             memory_config=memory_config,
         )
+    state.rules_ruling_engine = LivePilotRulingEngine(
+        state.agent.store,
+        project_id=memory_config.project_id,
+    )
     if state.rag_synthesis_enabled:
         dspy_model_name = os.getenv("DSPY_MODEL_NAME") or normalize_dspy_model_name(llm_model)
         try:
@@ -396,6 +651,63 @@ def _maybe_start_background_compile() -> None:
     state.rag_compile_task = asyncio.create_task(_run_background_compile_job())
 
 
+def _escape_gremlin_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _run_in_thread(func: Any) -> Any:
+    result: list[Any] = []
+    exception: Exception | None = None
+
+    def run() -> None:
+        nonlocal exception
+        try:
+            result.append(func())
+        except Exception as exc:
+            exception = exc
+
+    import threading
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join()
+
+    if exception is not None:
+        raise exception
+    if not result:
+        return None
+    return result[0]
+
+
+def _run_gremlin(query: str) -> list[Any]:
+    if state.janus is None:
+        raise HTTPException(status_code=503, detail="JanusGraph client not initialized")
+    return _run_in_thread(lambda: state.janus.submit(query).all().result())
+
+
+def _gremlin_count(query: str) -> int:
+    results = _run_gremlin(query)
+    if not results:
+        return 0
+    return int(results[0])
+
+
+def _normalize_gremlin_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _normalize_gremlin_value(inner) for key, inner in value.items()}
+    if isinstance(value, list):
+        if len(value) == 1:
+            return _normalize_gremlin_value(value[0])
+        return [_normalize_gremlin_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_normalize_gremlin_value(item) for item in value]
+    return value
+
+
+def _normalize_gremlin_rows(rows: list[Any]) -> list[Any]:
+    return [_normalize_gremlin_value(row) for row in rows]
+
+
 # --- Endpoints ---
 
 
@@ -552,6 +864,30 @@ async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResp
     )
 
 
+@app.post("/rules/pilot/ruling", response_model=RulesRulingResult)
+async def pilot_rules_ruling(request: RulesRulingRequest) -> RulesRulingResult:
+    """Return one structured ruling from the live SETI pilot graph."""
+
+    if state.rules_ruling_engine is None:
+        raise HTTPException(status_code=503, detail="Rules ruling engine not initialized")
+    try:
+        return state.rules_ruling_engine.answer(request)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Rules ruling error: {exc}") from exc
+
+
+@app.post("/rules/pilot/inspect", response_model=LivePilotRulingInspection)
+async def pilot_rules_inspection(request: RulesRulingRequest) -> LivePilotRulingInspection:
+    """Return the live inspection trace for one SETI pilot ruling request."""
+
+    if state.rules_ruling_engine is None:
+        raise HTTPException(status_code=503, detail="Rules ruling engine not initialized")
+    try:
+        return state.rules_ruling_engine.inspect_request(request)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Rules inspection error: {exc}") from exc
+
+
 @app.post("/memory/confirm/{session_id}/{proposal_id}")
 async def confirm_memory_proposal(
     session_id: str,
@@ -618,6 +954,153 @@ async def get_session_audit(session_id: str, limit: int = 50):
             }
             for entry in entries
         ],
+    }
+
+
+@app.get("/inspect/qdrant/", response_class=HTMLResponse)
+async def qdrant_inspector() -> HTMLResponse:
+    """Serve a lightweight Qdrant inspection page."""
+
+    return HTMLResponse(_QDRANT_INSPECTOR_HTML)
+
+
+@app.get("/inspect/qdrant/api/collections")
+async def qdrant_collection_summary():
+    """List collections and their basic stats."""
+
+    if state.qdrant is None:
+        raise HTTPException(status_code=503, detail="Qdrant client not initialized")
+
+    collections = []
+    response = state.qdrant.get_collections()
+    for item in response.collections:
+        collection_name = item.name
+        details = state.qdrant.get_collection(collection_name)
+        collections.append(
+            {
+                "name": collection_name,
+                "points_count": getattr(details, "points_count", None),
+                "vectors_count": getattr(details, "vectors_count", None),
+                "status": getattr(getattr(details, "status", None), "value", None)
+                or str(getattr(details, "status", "")),
+            }
+        )
+
+    return {"collections": collections}
+
+
+@app.get("/inspect/qdrant/api/collections/{collection_name}/points")
+async def qdrant_collection_points(collection_name: str, limit: int = Query(default=10, ge=1, le=100)):
+    """Fetch a sample of points from one Qdrant collection."""
+
+    if state.qdrant is None:
+        raise HTTPException(status_code=503, detail="Qdrant client not initialized")
+
+    points, next_page_offset = state.qdrant.scroll(
+        collection_name=collection_name,
+        limit=limit,
+        with_payload=True,
+        with_vectors=False,
+    )
+    return {
+        "collection_name": collection_name,
+        "limit": limit,
+        "next_page_offset": next_page_offset,
+        "points": [
+            {
+                "id": point.id,
+                "payload": point.payload,
+            }
+            for point in points
+        ],
+    }
+
+
+@app.get("/inspect/janus/", response_class=HTMLResponse)
+async def janus_inspector() -> HTMLResponse:
+    """Serve a lightweight JanusGraph inspection page."""
+
+    return HTMLResponse(_JANUS_INSPECTOR_HTML)
+
+
+@app.get("/inspect/janus/api/summary")
+async def janus_summary():
+    """Return basic JanusGraph counts for inspector use."""
+
+    return {
+        "vertex_count": _gremlin_count("g.V().count()"),
+        "edge_count": _gremlin_count("g.E().count()"),
+    }
+
+
+@app.get("/inspect/janus/api/vertices")
+async def janus_vertices(limit: int = Query(default=10, ge=1, le=100)):
+    """Return a sample of vertices with their properties."""
+
+    rows = _run_gremlin(
+        "g.V().limit(%d).project('id','label','properties')"
+        ".by(id()).by(label()).by(valueMap())" % limit
+    )
+    return {"vertices": _normalize_gremlin_rows(rows), "limit": limit}
+
+
+@app.get("/inspect/janus/api/vertices/search")
+async def janus_vertices_search(
+    property: str = Query(...),
+    value: str = Query(..., min_length=1),
+    limit: int = Query(default=10, ge=1, le=100),
+):
+    """Search vertices by one supported exact-match property."""
+
+    if property not in _JANUS_VERTEX_PROPERTIES:
+        raise HTTPException(status_code=400, detail=f"Unsupported vertex property: {property}")
+
+    rows = _run_gremlin(
+        "g.V().has('%s', '%s').limit(%d).project('id','label','properties')"
+        ".by(id()).by(label()).by(valueMap())"
+        % (_escape_gremlin_string(property), _escape_gremlin_string(value), limit)
+    )
+    return {
+        "property": property,
+        "value": value,
+        "limit": limit,
+        "vertices": _normalize_gremlin_rows(rows),
+    }
+
+
+@app.get("/inspect/janus/api/edges")
+async def janus_edges(limit: int = Query(default=10, ge=1, le=100)):
+    """Return a sample of edges with endpoints and properties."""
+
+    rows = _run_gremlin(
+        "g.E().limit(%d).project('id','label','out_node_id','in_node_id','properties')"
+        ".by(id()).by(label()).by(outV().values('node_id')).by(inV().values('node_id')).by(valueMap())"
+        % limit
+    )
+    return {"edges": _normalize_gremlin_rows(rows), "limit": limit}
+
+
+@app.get("/inspect/janus/api/edges/search")
+async def janus_edges_search(
+    property: str = Query(...),
+    value: str = Query(..., min_length=1),
+    limit: int = Query(default=10, ge=1, le=100),
+):
+    """Search edges by one supported exact-match property."""
+
+    if property not in _JANUS_EDGE_PROPERTIES:
+        raise HTTPException(status_code=400, detail=f"Unsupported edge property: {property}")
+
+    rows = _run_gremlin(
+        "g.E().has('%s', '%s').limit(%d).project('id','label','out_node_id','in_node_id','properties')"
+        ".by(id()).by(label()).by(outV().values('node_id')).by(inV().values('node_id')).by(valueMap())"
+        % (_escape_gremlin_string(property), _escape_gremlin_string(value), limit)
+    )
+    return {
+        "property": property,
+        "value": value,
+        "limit": limit,
+        "edges": _normalize_gremlin_rows(rows),
     }
 
 

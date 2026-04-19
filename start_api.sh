@@ -18,7 +18,7 @@ echo "Checking database connections..."
 
 # Check Qdrant
 QDRANT_HOST=${QDRANT_HOST:-localhost}
-QDRANT_HTTP_PORT=${QDRANT_HTTP_PORT:-6333}
+QDRANT_HTTP_PORT=${QDRANT_HTTP_PORT:-8111}
 
 if ! curl -s "http://$QDRANT_HOST:$QDRANT_HTTP_PORT/healthz" > /dev/null; then
     echo "❌ Cannot connect to Qdrant at $QDRANT_HOST:$QDRANT_HTTP_PORT"

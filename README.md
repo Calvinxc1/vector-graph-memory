@@ -4,6 +4,20 @@ Vector Graph Memory is a hybrid vector-plus-graph backend for AI systems that ne
 
 Today, this repository is still primarily an experimental memory system. The current strategic direction is to reuse that substrate for a rules-lawyer product focused on complex tabletop games, but that layer is still in planning and pilot work.
 
+Current `SETI` pilot status:
+
+- two manual `SETI` rule-graph seed slices now exist:
+  - `landing_and_orbiter_interactions`
+  - `free_action_timing_and_authority`
+- the rules extraction path now uses strongly typed `PydanticAI` output as the required contract boundary
+- the first live extraction path has reproduced the landing/orbiter seed under the current comparison rules
+- seed materialization, import, and verification tooling exist for loading those slices into Qdrant plus JanusGraph
+- a first live graph-backed ruling path exists for the frozen `SETI` pilot questions
+- a typed ruling-eval suite now scores retrieval nodes, expanded evidence, seed inference, case selection, citation choice, modifier choice, and precedence assembly separately
+- local inspection is available through direct database UIs:
+  - Qdrant: `http://localhost:8111/dashboard/`
+  - JanusGraph visualizer: `http://localhost:8112/`
+
 ## What Exists Today
 
 The repository currently contains:
@@ -20,6 +34,16 @@ The package metadata still reflects the currently implemented system:
 - package name: `vector-graph-memory`
 - package version: `0.1.0`
 - package description: hybrid vector-graph backend for AI agents with persistent memory
+
+## LLM Output Policy
+
+This repository now treats strongly typed LLM output as a design requirement wherever the output is consumed by code.
+
+- programmatic LLM output should go through `PydanticAI` with explicit `Pydantic` models
+- freeform JSON or prose may be used for debugging, but it is not the preferred steady-state contract for application logic
+- if an intermediate looser payload is unavoidable, normalize it into the typed model before validation, evaluation, or persistence
+
+This matters especially for the rules-lawyer work, where extracted rules, citations, edges, and ruling structures must be machine-checkable before they are trusted.
 
 ## Current Product Position
 
@@ -40,6 +64,7 @@ Planned or in-progress direction:
 - structured ruling outputs with citation chains and precedence order
 - game-specific ingestion and graph construction, starting with a `SETI` pilot
 - local-model validation for constrained rules-reference tasks
+- multi-slice extraction evaluation and generalized rule-ingestion workflows beyond the current `SETI` pilot fixtures
 
 If you are evaluating the repository as software, treat the memory substrate as the implemented product and the rules-lawyer work as a planned layer under active design.
 
@@ -109,7 +134,8 @@ What is incomplete or only partially implemented:
 - `ai_determined` trigger mode currently injects memory-review guidance on every turn rather than selectively deciding when to review.
 - `GET /memory/audit/{session_id}` accepts `limit`, but session-scoped audit queries do not currently enforce that limit.
 - JanusGraph schema initialization is still manual for local library and local API use outside the default Dockerized path.
-- The rules-lawyer layer is not yet an implemented end-user product path.
+- The rules-lawyer layer now has seed, extraction, and import scaffolding, but it is still not an implemented end-user product path.
+- `scripts/verify_manual_seed.py` is now generic by default and only runs support-path checks for seed manifests that define them.
 
 ## Architecture
 
@@ -159,6 +185,10 @@ Endpoints:
 
 - Open WebUI: `http://localhost:8052/`
 - API: `http://localhost:8052/vgm-api/`
+- Pilot ruling API: `POST /rules/pilot/ruling`
+- Pilot ruling inspection API: `POST /rules/pilot/inspect`
+- Qdrant UI: `http://localhost:8111/dashboard/`
+- JanusGraph visualizer: `http://localhost:8112/`
 
 Note: MongoDB is included in Compose, but JSONL is still the currently working audit backend.
 
@@ -217,7 +247,26 @@ Once the stack is running:
 1. Open `http://localhost:8052/`
 2. Use Open WebUI at the root path
 3. Reach the proxied API under `http://localhost:8052/vgm-api/`
-4. Inspect memory proposals through the proxied API or notebooks
+4. Inspect Qdrant directly at `http://localhost:8111/dashboard/`
+5. Inspect JanusGraph directly at `http://localhost:8112/`
+
+For local host-run utilities such as `scripts/import_manual_seed.py` and
+`scripts/verify_manual_seed.py`, the default direct backend targets are:
+
+- Qdrant HTTP: `localhost:8111`
+- JanusGraph Gremlin: `localhost:8182`
+
+These defaults are intended to match the Docker Compose host port exposure.
+
+For the live pilot ruling path, the main local utility scripts are:
+
+- `uv run python scripts/run_pilot_ruling.py --question '...'`
+- `uv run python scripts/run_pilot_ruling_eval.py`
+
+The eval runner executes the tracked frozen suite at
+`tests/fixtures/rag_eval/seti_rules_ruling_eval_v1.jsonl` and emits a typed JSON report.
+The API now also exposes the same intermediate inspection trace through
+`POST /rules/pilot/inspect` for debugging retrieval, seed selection, and case ranking.
 
 If you want to use an external Open WebUI instance, configure:
 

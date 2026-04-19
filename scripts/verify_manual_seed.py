@@ -2,9 +2,8 @@
 """Verify that a manual seed fixture is present in Vector Graph Memory.
 
 This script checks that the expected nodes and edges from a seed manifest exist
-in the live Qdrant + JanusGraph backend. It also verifies that the four frozen
-SETI landing/orbiter support paths are structurally satisfiable by checking that
-the required node IDs are present.
+in the live Qdrant + JanusGraph backend. It can also run optional, seed-specific
+support-path checks when a manifest has a known structural verification profile.
 
 Usage:
     uv run python scripts/verify_manual_seed.py
@@ -34,32 +33,34 @@ DEFAULT_MANIFEST = Path(
 )
 SEED_NAMESPACE_PREFIX = "vgm-manual-seed"
 
-EXPECTED_SUPPORT_PATHS: dict[str, list[str]] = {
-    "q1_orbiter_can_it_land": [
-        "rule_seti_orbiter_status_change",
-        "rule_seti_orbiter_is_permanent",
-        "src_seti_faq_q5_land_with_orbiter",
-    ],
-    "q2_opponent_orbiter_discount": [
-        "rule_seti_landing_discount_if_orbiter_present",
-        "rule_seti_landing_discount_not_owner_limited",
-        "src_seti_faq_q6_opponent_orbiter_discount",
-        "src_seti_core_land_on_planet_or_moon",
-    ],
-    "q3_moon_discount": [
-        "rule_seti_moon_landing_inherits_planet_discount_logic",
-        "rule_seti_landing_discount_if_orbiter_present",
-        "rule_seti_moon_landing_requires_access",
-        "src_seti_faq_q7_moon_discount",
-    ],
-    "q4_opponent_orbiter_moon_discount": [
-        "rule_seti_landing_discount_not_owner_limited",
-        "rule_seti_moon_landing_inherits_planet_discount_logic",
-        "rule_seti_moon_landing_requires_access",
-        "rule_seti_landing_discount_if_orbiter_present",
-        "src_seti_faq_q6_opponent_orbiter_discount",
-        "src_seti_faq_q7_moon_discount",
-    ],
+SUPPORT_PATH_REQUIREMENTS_BY_SEED: dict[str, dict[str, list[str]]] = {
+    "seti_landing_orbiter_seed_v1": {
+        "q1_orbiter_can_it_land": [
+            "rule_seti_orbiter_status_change",
+            "rule_seti_orbiter_is_permanent",
+            "src_seti_faq_q5_land_with_orbiter",
+        ],
+        "q2_opponent_orbiter_discount": [
+            "rule_seti_landing_discount_if_orbiter_present",
+            "rule_seti_landing_discount_not_owner_limited",
+            "src_seti_faq_q6_opponent_orbiter_discount",
+            "src_seti_core_land_on_planet_or_moon",
+        ],
+        "q3_moon_discount": [
+            "rule_seti_moon_landing_inherits_planet_discount_logic",
+            "rule_seti_landing_discount_if_orbiter_present",
+            "rule_seti_moon_landing_requires_access",
+            "src_seti_faq_q7_moon_discount",
+        ],
+        "q4_opponent_orbiter_moon_discount": [
+            "rule_seti_landing_discount_not_owner_limited",
+            "rule_seti_moon_landing_inherits_planet_discount_logic",
+            "rule_seti_moon_landing_requires_access",
+            "rule_seti_landing_discount_if_orbiter_present",
+            "src_seti_faq_q6_opponent_orbiter_discount",
+            "src_seti_faq_q7_moon_discount",
+        ],
+    }
 }
 
 
@@ -119,6 +120,15 @@ def parse_args() -> argparse.Namespace:
         default="vgm_memory",
         help="Qdrant collection name to verify against (default: vgm_memory)",
     )
+    parser.add_argument(
+        "--support-paths",
+        choices=("auto", "on", "off"),
+        default="auto",
+        help=(
+            "Whether to run seed-specific support-path checks. "
+            "'auto' runs them only for known seed profiles."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -129,13 +139,20 @@ def main() -> int:
     edge_records = _load_jsonl(Path(manifest["edge_file"]))
 
     qdrant_host = os.getenv("QDRANT_HOST", "localhost")
-    qdrant_port = int(os.getenv("QDRANT_HTTP_PORT", "6333"))
+    qdrant_port = int(os.getenv("QDRANT_HTTP_PORT", "8111"))
     janusgraph_host = os.getenv("JANUSGRAPH_HOST", "localhost")
     janusgraph_port = int(os.getenv("JANUSGRAPH_PORT", "8182"))
 
     print(f"Verifying seed: {manifest['seed_id']}")
     print(f"Qdrant target: {qdrant_host}:{qdrant_port}")
     print(f"JanusGraph target: {janusgraph_host}:{janusgraph_port}")
+
+    support_path_requirements = SUPPORT_PATH_REQUIREMENTS_BY_SEED.get(
+        manifest["seed_id"], {}
+    )
+    run_support_paths = args.support_paths == "on" or (
+        args.support_paths == "auto" and bool(support_path_requirements)
+    )
 
     qdrant = QdrantClient(host=qdrant_host, port=qdrant_port)
     janus = gremlin_client.Client(
@@ -171,15 +188,28 @@ def main() -> int:
         }
 
         missing_support_paths: dict[str, list[str]] = {}
-        for path_name, required_node_ids in EXPECTED_SUPPORT_PATHS.items():
-            missing = [node_id for node_id in required_node_ids if node_id not in all_present_node_ids]
-            if missing:
-                missing_support_paths[path_name] = missing
+        if run_support_paths:
+            for path_name, required_node_ids in support_path_requirements.items():
+                missing = [
+                    node_id
+                    for node_id in required_node_ids
+                    if node_id not in all_present_node_ids
+                ]
+                if missing:
+                    missing_support_paths[path_name] = missing
     finally:
         janus.close()
 
     print(f"Expected nodes: {len(node_records)}")
     print(f"Expected edges: {len(edge_records)}")
+    print(
+        "Support-path checks: "
+        + (
+            f"enabled ({len(support_path_requirements)} profiles)"
+            if run_support_paths
+            else "disabled"
+        )
+    )
     print(f"Missing Qdrant nodes: {len(missing_qdrant_nodes)}")
     print(f"Missing Janus nodes: {len(missing_janus_nodes)}")
     print(f"Missing Janus edges: {len(missing_janus_edges)}")

@@ -1,0 +1,22 @@
+{
+  "seed_id": "seti_free_action_authority_seed_v1",
+  "game_id": "seti",
+  "scope": "rules_only",
+  "subsystem": "free_action_timing_and_authority",
+  "project_id": "seti_rules_lawyer",
+  "source": "manual_seed:seti_free_action_authority_seed_v1",
+  "node_count": 11,
+  "edge_count": 11,
+  "node_file": "tests/fixtures/rag_eval/seti_free_action_authority_seed_v1_nodes.jsonl",
+  "edge_file": "tests/fixtures/rag_eval/seti_free_action_authority_seed_v1_edges.jsonl",
+  "related_docs": [
+    "docs/plans/seti-free-action-authority-subsystem-brief.md",
+    "docs/plans/seti-free-action-authority-manual-seed-spec.md"
+  ],
+  "frozen_questions": [
+    "Can I interrupt a main action with a free action, and can I interrupt one free action with another free action?",
+    "During a Scan action, can I interrupt the Scan with a free action and then continue the Scan?",
+    "If placing data triggers the income increase effect, can I place more data first and then resolve that income effect?",
+    "The player aid says free actions are \"NO LIMIT\". Does that allow one free action to interrupt another?"
+  ]
+}

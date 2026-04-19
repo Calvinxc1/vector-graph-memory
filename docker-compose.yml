@@ -2,6 +2,8 @@ services:
   qdrant:
     image: qdrant/qdrant:${QDRANT_VERSION:-v1.17.1}
     container_name: ${QDRANT_CONTAINER_NAME:-vector-graph-qdrant}
+    ports:
+      - "8111:6333"
     expose:
       - "6333"  # HTTP API (internal only)
       - "6334"  # gRPC API (internal only)
@@ -17,6 +19,8 @@ services:
   janusgraph:
     image: janusgraph/janusgraph:${JANUSGRAPH_VERSION:-latest}
     container_name: ${JANUSGRAPH_CONTAINER_NAME:-vector-graph-janusgraph}
+    ports:
+      - "8182:8182"
     expose:
       - "8182"  # Gremlin Server (internal only)
     volumes:
@@ -101,6 +105,22 @@ services:
       - WEBUI_AUTH=false
     depends_on:
       - api
+    restart: unless-stopped
+    networks:
+      - vector-graph-network
+
+  janusgraph-visualizer:
+    image: janusgraph/janusgraph-visualizer:latest
+    container_name: ${JANUS_VISUALIZER_CONTAINER_NAME:-vector-graph-janus-visualizer}
+    ports:
+      - "8112:3001"
+    expose:
+      - "3001"
+    environment:
+      - GREMLIN_HOST=janusgraph
+      - GREMLIN_PORT=8182
+    depends_on:
+      - janusgraph
     restart: unless-stopped
     networks:
       - vector-graph-network

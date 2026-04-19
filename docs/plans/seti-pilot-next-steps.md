@@ -7,6 +7,12 @@ Status:
 - Planning document
 - Intended to connect the current repository state to the first rules-lawyer milestone
 - Focused on one bounded `SETI` subsystem as the near-term proving ground
+- As of March 29, 2026, the pilot has moved beyond a single subsystem plan:
+  - two manual seed slices exist in `tests/fixtures/rag_eval/`
+  - typed extraction contracts exist under `src/vgm/rules/`
+  - the landing/orbiter extraction path has reproduced the reference seed under the current comparison rules
+  - seed import and verification scripts now work against the live Qdrant plus JanusGraph stack
+  - direct DB inspection is available at `http://localhost:8111/dashboard/` and `http://localhost:8112/`
 
 ## Pilot Goal
 
@@ -91,6 +97,11 @@ The strategic direction assumes small local models are sufficient once constrain
 
 ### Step 1: Choose And Freeze The First SETI Subsystem
 
+Status:
+
+- Completed for `landing_and_orbiter_interactions`
+- Expanded with a second manual slice for `free_action_timing_and_authority`
+
 Action:
 
 - select one `SETI` subsystem narrow enough to model manually in full
@@ -111,6 +122,10 @@ Why this comes first:
 - without a hard boundary, ingestion and evaluation will sprawl
 
 ### Step 2: Define The Pilot Rule Model
+
+Status:
+
+- Completed as an explicit typed contract in `src/vgm/rules/contracts.py`
 
 Action:
 
@@ -142,6 +157,12 @@ Why this matters:
 
 ### Step 3: Build A Manual Ground-Truth Graph Slice
 
+Status:
+
+- Completed for two `SETI` slices:
+  - `seti_landing_orbiter_seed_v1`
+  - `seti_free_action_authority_seed_v1`
+
 Action:
 
 - hand-author the canonical nodes, edge relationships, and citations for the chosen subsystem
@@ -157,6 +178,11 @@ Validation expectation:
 - inspect every node and edge for citation accuracy and graph logic
 
 ### Step 4: Define The Automated Extraction Contract
+
+Status:
+
+- Completed for the current pilot contract
+- `PydanticAI` is now the required structured-output boundary for programmatic LLM extraction in this repo
 
 Action:
 
@@ -179,6 +205,11 @@ Why this matters:
 
 ### Step 5: Create A Comparison Rubric
 
+Status:
+
+- Partially completed
+- extraction comparison and DSPy-oriented evaluation seams exist, but the broader acceptance rubric is still light and seed-centric
+
 Action:
 
 - evaluate extraction output against the manual slice with rule-aware metrics
@@ -196,6 +227,12 @@ Deliverable:
 - a pilot comparison rubric with pass or fail thresholds for each category
 
 ### Step 6: Define The Ruling Output Contract
+
+Status:
+
+- Partially completed
+- a typed deterministic pilot ruling contract now exists for the frozen `SETI` pilot questions
+- the first implementation is bundle-backed and fixture-scoped, not yet a general live retrieval path
 
 Action:
 
@@ -216,8 +253,20 @@ Preferred presentation:
 Deliverable:
 
 - one rules-lawyer response schema for the `SETI` pilot
+- first deterministic ruling engine covering the two tracked pilot slices
 
 ### Step 7: Wire The Pilot Retrieval Path
+
+Status:
+
+- Partially completed
+- import into live Qdrant plus JanusGraph is working
+- direct DB inspection is working
+- a pilot inspection API now exists for retrieving the structured live ruling trace directly
+- deterministic ruling assembly over the tracked pilot bundles now exists for the frozen question set
+- a first live graph-backed ruling path now exists for the frozen pilot questions through Qdrant retrieval plus JanusGraph expansion
+- retrieval and ruling assembly are still tightly scoped to the frozen `SETI` pilot question set, not yet generalized beyond it
+- a typed live-ruling eval suite now exists for paraphrases, authority conflicts, and abstain behavior, with separate scoring for retrieval nodes, expanded evidence, seed inference, case selection, citation choice, modifier choice, and precedence assembly
 
 Action:
 
@@ -236,6 +285,12 @@ Deliverable:
 - one end-to-end pilot retrieval path for the chosen subsystem
 
 ### Step 8: Test With Local Models
+
+Status:
+
+- Still open
+- hosted-model baseline work has been done with `openai:gpt-4o-mini`
+- local-model comparison has not yet been validated
 
 Action:
 

@@ -186,7 +186,7 @@ def main() -> int:
         )
 
     qdrant_host = os.getenv("QDRANT_HOST", "localhost")
-    qdrant_port = int(os.getenv("QDRANT_HTTP_PORT", "6333"))
+    qdrant_port = int(os.getenv("QDRANT_HTTP_PORT", "8111"))
     janusgraph_host = os.getenv("JANUSGRAPH_HOST", "localhost")
     janusgraph_port = int(os.getenv("JANUSGRAPH_PORT", "8182"))
     embedding_model_name = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")

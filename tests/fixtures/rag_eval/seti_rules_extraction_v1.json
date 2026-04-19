@@ -1,0 +1,8 @@
+{
+  "suite_id": "seti_rules_extraction_v1",
+  "game_id": "seti",
+  "seed_manifests": [
+    "tests/fixtures/rag_eval/seti_landing_orbiter_seed_v1_manifest.json",
+    "tests/fixtures/rag_eval/seti_free_action_authority_seed_v1_manifest.json"
+  ]
+}

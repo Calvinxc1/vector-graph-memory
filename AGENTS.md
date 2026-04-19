@@ -77,6 +77,15 @@ These instructions apply to the entire repo tree.
 - If executable validation is available but not run, do not present the result as fully verified.
 - Do not recommend acceptance of nontrivial code based only on reasoning or superficial plausibility when direct validation is feasible.
 
+### Structured LLM Output Policy
+
+- In this repository, any LLM output that is intended for programmatic use must be routed through `PydanticAI` with explicit typed models wherever practical.
+- Treat freeform or weakly structured model output as a temporary debugging aid, not as an acceptable steady-state interface for application logic.
+- When an LLM output feeds parsing, graph construction, evaluation, workflow control, API contracts, configuration generation, or persistence, define a typed `Pydantic` model first and make that model the acceptance boundary.
+- If a provider or framework requires an intermediate looser shape, normalize it immediately into the typed model before downstream validation or storage.
+- Prefer adding alias-handling, normalization, and retries at the `PydanticAI` boundary over adding ad hoc string parsing later in the pipeline.
+- DSPy may optimize prompts or signatures around a task, but it should not replace the repository's typed `PydanticAI` acceptance boundary for LLM output that the code consumes.
+
 ### Review Standard For AI-Generated Code
 
 - When reviewing or modifying the repo, check specifically for hallucinated abstractions, dead code paths, configuration drift, API/documentation mismatch, inconsistent data models, shallow error handling, unused complexity, and assumptions copied across files without verification.
