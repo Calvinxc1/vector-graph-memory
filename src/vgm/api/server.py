@@ -1,6 +1,7 @@
 """FastAPI server with OpenAI-compatible API for Open WebUI integration."""
 
 import asyncio
+import json
 import os
 import logging
 from typing import Any, Dict, List, Optional, Literal, cast
@@ -8,7 +9,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from gremlin_python.driver import client as gremlin_client  # type: ignore[import-untyped]
@@ -131,6 +132,9 @@ class AppState:
 
 state = AppState()
 logger = logging.getLogger(__name__)
+
+MEMORY_CHAT_MODEL_ID = "vector-graph-memory"
+RULES_CHAT_MODEL_ID = "seti-rules-lawyer"
 
 
 _TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
@@ -708,6 +712,180 @@ def _normalize_gremlin_rows(rows: list[Any]) -> list[Any]:
     return [_normalize_gremlin_value(row) for row in rows]
 
 
+def _format_rule_citation(citation: Any) -> str:
+    label = citation.citation_label or citation.title
+    locator = citation.locator or citation.citation_short
+    if locator:
+        return f"{label} ({locator})"
+    return label
+
+
+def _format_rules_ruling_for_chat(result: RulesRulingResult) -> str:
+    lines = [result.ruling]
+
+    if result.primary_citation:
+        lines.extend(("", f"Primary authority: {_format_rule_citation(result.primary_citation)}"))
+
+    if result.modifying_citations:
+        lines.append("")
+        lines.append("Modifiers:")
+        lines.extend(f"- {_format_rule_citation(citation)}" for citation in result.modifying_citations)
+
+    if result.supporting_citations:
+        lines.append("")
+        lines.append("Supporting authority:")
+        lines.extend(f"- {_format_rule_citation(citation)}" for citation in result.supporting_citations)
+
+    if result.precedence_order:
+        lines.append("")
+        lines.append("Precedence:")
+        lines.extend(f"{entry.order}. {entry.summary}" for entry in result.precedence_order)
+
+    if result.uncertainty:
+        lines.extend(("", f"Uncertainty: {result.uncertainty}"))
+
+    return "\n".join(lines)
+
+
+def _format_rules_trace_for_thinking(
+    inspection: LivePilotRulingInspection,
+    result: RulesRulingResult,
+) -> str:
+    lines = ["<think>", "Trace summary:"]
+
+    if inspection.selected_seed_id:
+        seed_line = f"- Seed: {inspection.selected_seed_id}"
+        if inspection.seed_inference.selected_score > 0:
+            seed_line += f" (score {inspection.seed_inference.selected_score:.2f})"
+        lines.append(seed_line)
+
+    if inspection.selected_case:
+        lines.append(
+            "- Matched case: "
+            f"{inspection.selected_case.question_id} "
+            f"(question {inspection.selected_case.question_score:.2f}, "
+            f"evidence {inspection.selected_case.evidence_score})"
+        )
+    elif inspection.candidate_cases:
+        top_case = inspection.candidate_cases[0]
+        lines.append(
+            "- No supported case cleared the selection threshold; "
+            f"top candidate was {top_case.question_id} "
+            f"(question {top_case.question_score:.2f}, evidence {top_case.evidence_score})."
+        )
+    else:
+        lines.append("- No supported case candidates were available for this question.")
+
+    if result.primary_citation:
+        lines.append(f"- Primary authority: {_format_rule_citation(result.primary_citation)}")
+
+    if result.modifying_citations:
+        modifier_labels = ", ".join(
+            _format_rule_citation(citation) for citation in result.modifying_citations
+        )
+        lines.append(f"- Modifiers considered: {modifier_labels}")
+
+    if inspection.evidence.source_nodes:
+        source_labels = ", ".join(
+            _format_rule_citation(source)
+            for source in inspection.evidence.source_nodes[:3]
+        )
+        lines.append(f"- Retrieved sources: {source_labels}")
+
+    if result.precedence_order:
+        lines.append(f"- Control rationale: {result.precedence_order[0].summary}")
+
+    if result.abstain and result.uncertainty:
+        lines.append(f"- Abstain reason: {result.uncertainty}")
+
+    lines.append("</think>")
+    return "\n".join(lines)
+
+
+def _build_chat_completion_response(
+    *,
+    model: str,
+    session_id: str,
+    prompt_text: str,
+    assistant_response: str,
+) -> ChatCompletionResponse:
+    return ChatCompletionResponse(
+        id=f"chatcmpl-{session_id}-{int(datetime.now().timestamp())}",
+        created=int(datetime.now().timestamp()),
+        model=model,
+        choices=[
+            ChatCompletionChoice(
+                index=0,
+                message=ChatMessage(role="assistant", content=assistant_response),
+                finish_reason="stop",
+            )
+        ],
+        usage=ChatCompletionUsage(
+            prompt_tokens=len(prompt_text.split()),
+            completion_tokens=len(assistant_response.split()),
+            total_tokens=len(prompt_text.split()) + len(assistant_response.split()),
+        ),
+    )
+
+
+def _build_chat_completion_chunk(
+    *,
+    response_id: str,
+    created: int,
+    model: str,
+    delta: dict[str, str],
+    finish_reason: str | None = None,
+) -> str:
+    return json.dumps(
+        {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": delta,
+                    "finish_reason": finish_reason,
+                }
+            ],
+        }
+    )
+
+
+def _split_stream_sections(assistant_response: str) -> list[str]:
+    sections = assistant_response.split("\n\n")
+    if not sections:
+        return [assistant_response]
+    streamed_sections = [sections[0]]
+    streamed_sections.extend(f"\n\n{section}" for section in sections[1:])
+    return streamed_sections
+
+
+def _build_rules_streaming_response(
+    *,
+    model: str,
+    session_id: str,
+    trace_summary: str | None,
+    assistant_response: str,
+) -> StreamingResponse:
+    response_id = f"chatcmpl-{session_id}-{int(datetime.now().timestamp())}"
+    created = int(datetime.now().timestamp())
+    sections = []
+    if trace_summary:
+        sections.append(trace_summary)
+    sections.extend(_split_stream_sections(assistant_response))
+
+    async def event_stream():
+        yield f"data: {_build_chat_completion_chunk(response_id=response_id, created=created, model=model, delta={'role': 'assistant'})}\n\n"
+        for section in sections:
+            yield f"data: {_build_chat_completion_chunk(response_id=response_id, created=created, model=model, delta={'content': section})}\n\n"
+        yield f"data: {_build_chat_completion_chunk(response_id=response_id, created=created, model=model, delta={}, finish_reason='stop')}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 # --- Endpoints ---
 
 
@@ -724,27 +902,80 @@ async def root():
 @app.get("/v1/models")
 async def list_models() -> ModelList:
     """List available models (OpenAI compatible)."""
+    created = int(datetime.now().timestamp())
     return ModelList(
         data=[
             ModelInfo(
-                id="vector-graph-memory",
-                created=int(datetime.now().timestamp()),
-            )
+                id=MEMORY_CHAT_MODEL_ID,
+                created=created,
+            ),
+            ModelInfo(
+                id=RULES_CHAT_MODEL_ID,
+                created=created,
+            ),
         ]
     )
 
 
-@app.post("/v1/chat/completions")
-async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResponse:
+@app.post("/v1/chat/completions", response_model=None)
+async def chat_completions(
+    request: ChatCompletionRequest,
+) -> ChatCompletionResponse | StreamingResponse:
     """OpenAI-compatible chat completions endpoint."""
-    if not state.agent:
-        raise HTTPException(status_code=503, detail="Agent not initialized")
-
-    # Extract messages
     if not request.messages:
         raise HTTPException(status_code=400, detail="No messages provided")
 
     session_id = request.user or "default"
+    latest_user_message = next(
+        (message.content for message in reversed(request.messages) if message.role == "user"),
+        None,
+    )
+    if latest_user_message is None:
+        raise HTTPException(status_code=400, detail="No user message provided")
+
+    if request.model == RULES_CHAT_MODEL_ID:
+        if state.rules_ruling_engine is None:
+            raise HTTPException(status_code=503, detail="Rules ruling engine not initialized")
+        try:
+            rules_request = RulesRulingRequest(question=latest_user_message)
+            inspection = (
+                state.rules_ruling_engine.inspect_request(rules_request)
+                if request.stream
+                else None
+            )
+            result = state.rules_ruling_engine.answer(rules_request)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Rules ruling error: {exc}") from exc
+        assistant_response = _format_rules_ruling_for_chat(result)
+        if request.stream:
+            return _build_rules_streaming_response(
+                model=request.model,
+                session_id=session_id,
+                trace_summary=(
+                    _format_rules_trace_for_thinking(inspection, result)
+                    if inspection is not None
+                    else None
+                ),
+                assistant_response=assistant_response,
+            )
+        return _build_chat_completion_response(
+            model=request.model,
+            session_id=session_id,
+            prompt_text=latest_user_message,
+            assistant_response=assistant_response,
+        )
+
+    if request.model != MEMORY_CHAT_MODEL_ID:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported model '{request.model}'. "
+                f"Available models: {MEMORY_CHAT_MODEL_ID}, {RULES_CHAT_MODEL_ID}"
+            ),
+        )
+
+    if not state.agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
 
     rag_context = None
     if (state.rag_context_enabled or state.rag_synthesis_enabled) and state.rag_context_builder:
@@ -784,25 +1015,11 @@ async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResp
                 rag_result.abstain,
             )
             if rag_result.answer:
-                return ChatCompletionResponse(
-                    id=f"chatcmpl-{session_id}-{int(datetime.now().timestamp())}",
-                    created=int(datetime.now().timestamp()),
+                return _build_chat_completion_response(
                     model=request.model,
-                    choices=[
-                        ChatCompletionChoice(
-                            index=0,
-                            message=ChatMessage(role="assistant", content=rag_result.answer),
-                            finish_reason="stop",
-                        )
-                    ],
-                    usage=ChatCompletionUsage(
-                        prompt_tokens=len(rag_context.retrieval_query.split()),
-                        completion_tokens=len(rag_result.answer.split()),
-                        total_tokens=(
-                            len(rag_context.retrieval_query.split())
-                            + len(rag_result.answer.split())
-                        ),
-                    ),
+                    session_id=session_id,
+                    prompt_text=rag_context.retrieval_query,
+                    assistant_response=rag_result.answer,
                 )
             logger.warning(
                 "[RAG] Baseline DSPy synthesizer returned an empty answer for session=%s; falling back",
@@ -844,23 +1061,11 @@ async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResp
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
 
-    # Build response
-    return ChatCompletionResponse(
-        id=f"chatcmpl-{session_id}-{int(datetime.now().timestamp())}",
-        created=int(datetime.now().timestamp()),
+    return _build_chat_completion_response(
         model=request.model,
-        choices=[
-            ChatCompletionChoice(
-                index=0,
-                message=ChatMessage(role="assistant", content=assistant_response),
-                finish_reason="stop",
-            )
-        ],
-        usage=ChatCompletionUsage(
-            prompt_tokens=len(user_message.split()),  # Rough estimate
-            completion_tokens=len(assistant_response.split()),
-            total_tokens=len(user_message.split()) + len(assistant_response.split()),
-        ),
+        session_id=session_id,
+        prompt_text=user_message,
+        assistant_response=assistant_response,
     )
 
 

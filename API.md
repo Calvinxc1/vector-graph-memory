@@ -93,7 +93,9 @@ Note: `start_api.sh` currently checks `OPENAI_API_KEY` from the shell environmen
    - name: `Vector Graph Memory`
    - base URL: `http://localhost:8052/vgm-api/v1`
    - API key: any value for the current default setup
-4. Save and select the `vector-graph-memory` model.
+4. Save and select one of these models:
+   - `vector-graph-memory` for the memory-oriented chat path
+   - `seti-rules-lawyer` for the live `SETI` pilot ruling path
 
 ### Usage
 
@@ -104,7 +106,7 @@ Through Open WebUI, the current agent can:
 - propose storing information in memory
 - record memory actions in the audit log
 
-It is still a memory-oriented operator experience, not yet a game-ruling experience.
+When `seti-rules-lawyer` is selected, Open WebUI routes the latest user message through the pilot ruling engine and renders the formatted ruling, citations, and precedence chain in the standard chat surface.
 
 ## DSPy Grounded Synthesis Status
 
@@ -124,7 +126,7 @@ Important scope note:
 - it uses the local `SETI` rules-reference eval suite as an optimization target
 - it does not by itself mean the repository already exposes a complete rules-lawyer API
 
-See [dspy-rag-implementation.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/dspy-rag-implementation.md) for the staged implementation plan.
+See [dspy-rag-implementation.md](docs/plans/dspy-rag-implementation.md) for the staged implementation plan.
 
 ## API Endpoints
 
@@ -132,15 +134,23 @@ See [dspy-rag-implementation.md](/home/jcherry/Documents/storage/git/vector-grap
 
 #### `POST /v1/chat/completions`
 
-Standard OpenAI chat completions endpoint.
+Standard OpenAI chat completions endpoint. The selected `model` determines which backend handles the request:
+
+- `vector-graph-memory`: memory-oriented chat with the baseline or feature-flagged DSPy path
+- `seti-rules-lawyer`: live `SETI` pilot ruling path rendered into chat output
+
+For `seti-rules-lawyer`, `stream: true` now returns OpenAI-style SSE chunks for Open WebUI compatibility. The streamed output begins with a concise `<think>...</think>` trace summary derived from the typed inspection path, so Open WebUI can render it in the collapsible Thinking UI before the visible ruling text. The ruling is still computed before streaming begins, so this improves rendering UX rather than first-token latency.
 
 Request:
 
 ```json
 {
-  "model": "vector-graph-memory",
+  "model": "seti-rules-lawyer",
   "messages": [
-    {"role": "user", "content": "What do you remember about my job search?"}
+    {
+      "role": "user",
+      "content": "If another player already has an orbiter there, do I still get the cheaper landing cost?"
+    }
   ],
   "user": "optional-session-id"
 }
@@ -153,13 +163,13 @@ Response:
   "id": "chatcmpl-...",
   "object": "chat.completion",
   "created": 1234567890,
-  "model": "vector-graph-memory",
+  "model": "seti-rules-lawyer",
   "choices": [
     {
       "index": 0,
       "message": {
         "role": "assistant",
-        "content": "Based on my memory, you applied to..."
+        "content": "Yes. The FAQ says the discount applies if any orbiter is already at the planet, including an opponent's orbiter.\n\nPrimary authority: Core Rulebook, Land on Planet or Moon (p. 12)"
       },
       "finish_reason": "stop"
     }
@@ -184,6 +194,12 @@ Response:
   "data": [
     {
       "id": "vector-graph-memory",
+      "object": "model",
+      "created": 1234567890,
+      "owned_by": "vector-graph-memory"
+    },
+    {
+      "id": "seti-rules-lawyer",
       "object": "model",
       "created": 1234567890,
       "owned_by": "vector-graph-memory"
@@ -290,8 +306,9 @@ The API server currently:
 1. Initializes Qdrant, JanusGraph, and the `MemoryAgent`.
 2. Receives OpenAI-compatible chat requests.
 3. Uses the `user` field as the session identifier.
-4. Runs either the baseline answer path or the feature-flagged DSPy synthesis path.
-5. Exposes proposal, confirmation, and audit endpoints for memory control.
+4. Routes `vector-graph-memory` requests through either the baseline answer path or the feature-flagged DSPy synthesis path.
+5. Routes `seti-rules-lawyer` requests through the live pilot ruling engine.
+6. Exposes proposal, confirmation, and audit endpoints for memory control.
 
 ## Known Gaps
 
@@ -299,7 +316,7 @@ The API server currently:
 - `start_api.sh` requires `OPENAI_API_KEY` to be exported in the current shell and does not source `.env`.
 - JanusGraph schema initialization is manual for local library and local API development.
 - Session-scoped audit history does not currently apply the documented `limit` parameter.
-- The current API contract is not yet specialized for rules-lawyer output.
+- The `seti-rules-lawyer` chat model currently renders the pilot ruling into plain chat text rather than returning the full typed ruling contract.
 
 ## Development
 
@@ -319,8 +336,8 @@ curl http://localhost:8000/
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "vector-graph-memory",
-    "messages": [{"role": "user", "content": "Hello!"}],
+    "model": "seti-rules-lawyer",
+    "messages": [{"role": "user", "content": "If another player already has an orbiter there, do I still get the cheaper landing cost?"}],
     "user": "test-session"
   }'
 

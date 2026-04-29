@@ -11,8 +11,21 @@ Current suite:
   - includes abstention cases with intentionally insufficient retrieved context
 - `seti_rules_ruling_eval_v1.jsonl`
   - `8` frozen live-ruling evaluation cases for the bounded `SETI` pilot
-  - scores retrieval nodes, expanded evidence, seed inference, case selection, primary citation, modifier selection, and precedence assembly separately
+  - scores retrieval nodes, expanded evidence, seed inference, case selection, primary citation, modifier selection, precedence assembly, and abstention separately
+  - current v1 acceptance uses hard gates on abstain behavior, primary citation, and precedence, plus suite thresholds on the aggregate component averages
   - includes broader paraphrase coverage, authority-conflict coverage, and one intentional abstain case
+- `seti_rules_ruling_eval_heldout_v1.jsonl`
+  - `34` typed held-out questions for the same bounded `SETI` pilot surface
+  - organized into:
+    - `6` `seen_regression` cases
+    - `12` `heldout_supported` cases
+    - `10` `near_miss_abstain` cases
+    - `6` `out_of_scope_abstain` cases
+  - carries typed metadata for `bucket`, `split`, `manual_candidate`, and `expected_abstain_kind`
+  - intended usage:
+    - tune on `seen_regression` + `heldout_supported/dev` + `near_miss_abstain/dev`
+    - final automated check on `seen_regression` + `heldout_supported/validation` + `near_miss_abstain/validation` + all `out_of_scope_abstain`
+    - select a stable manual human subset from the `manual_candidate=true` rows
 
 Manual seed fixtures:
 

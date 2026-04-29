@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Literal
 
 from pydantic import BaseModel, Field
 
@@ -15,9 +15,18 @@ class PilotRulingEvalCase(BaseModel):
 
     case_id: str
     suite_id: str
+    bucket: Literal[
+        "seen_regression",
+        "heldout_supported",
+        "near_miss_abstain",
+        "out_of_scope_abstain",
+    ] = "seen_regression"
+    split: Literal["regression", "dev", "validation"] = "validation"
+    manual_candidate: bool = False
     seed_id: str | None = None
     question: str
     expected_abstain: bool = False
+    expected_abstain_kind: Literal["near_miss", "out_of_scope"] | None = None
     expected_inferred_seed_id: str | None = None
     expected_selected_seed_id: str | None = None
     expected_question_id: str | None = None
@@ -42,6 +51,42 @@ class PilotRulingEvalComponentScores(BaseModel):
     primary_citation: float
     modifier_selection: float
     precedence_assembly: float
+    abstention: float
+
+
+class PilotRulingAcceptanceThresholds(BaseModel):
+    """Initial acceptance thresholds for the bounded SETI pilot."""
+
+    min_expanded_evidence: float = Field(default=0.90, ge=0.0, le=1.0)
+    min_seed_inference: float = Field(default=0.95, ge=0.0, le=1.0)
+    min_case_selection: float = Field(default=0.95, ge=0.0, le=1.0)
+    required_primary_citation: float = Field(default=1.0, ge=0.0, le=1.0)
+    min_modifier_selection: float = Field(default=0.90, ge=0.0, le=1.0)
+    min_precedence_assembly: float = Field(default=0.95, ge=0.0, le=1.0)
+    required_abstention: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
+class PilotRulingThresholdResults(BaseModel):
+    """Pass/fail status for each suite-level acceptance threshold."""
+
+    expanded_evidence: bool
+    seed_inference: bool
+    case_selection: bool
+    primary_citation: bool
+    modifier_selection: bool
+    precedence_assembly: bool
+    abstention: bool
+
+
+class PilotRulingAcceptanceSummary(BaseModel):
+    """Pilot acceptance decision over hard gates plus suite thresholds."""
+
+    thresholds: PilotRulingAcceptanceThresholds
+    threshold_results: PilotRulingThresholdResults
+    hard_gate_failures: list[str] = Field(default_factory=list)
+    hard_gate_passed: bool
+    suite_thresholds_passed: bool
+    pilot_ready: bool
 
 
 class PilotRulingEvalCaseReport(BaseModel):
@@ -80,6 +125,8 @@ class PilotRulingEvalReport(BaseModel):
     average_primary_citation: float
     average_modifier_selection: float
     average_precedence_assembly: float
+    average_abstention: float
+    acceptance: PilotRulingAcceptanceSummary
     cases: list[PilotRulingEvalCaseReport]
 
 
@@ -110,10 +157,49 @@ class PilotRulingEvaluator:
     def from_suite(cls, path: str | Path) -> "PilotRulingEvaluator":
         return cls(load_pilot_ruling_eval_cases(path))
 
-    def evaluate_engine(self, engine: LivePilotRulingEngine) -> PilotRulingEvalReport:
+    def evaluate_engine(
+        self,
+        engine: LivePilotRulingEngine,
+        *,
+        thresholds: PilotRulingAcceptanceThresholds | None = None,
+    ) -> PilotRulingEvalReport:
+        thresholds = thresholds or PilotRulingAcceptanceThresholds()
         case_reports = [self._evaluate_case(engine, case) for case in self.cases]
         total_cases = len(case_reports)
         passed_cases = sum(1 for report in case_reports if report.total_score >= 0.999)
+        average_expanded_evidence = _average(
+            report.component_scores.expanded_evidence for report in case_reports
+        )
+        average_seed_inference = _average(
+            report.component_scores.seed_inference for report in case_reports
+        )
+        average_case_selection = _average(
+            report.component_scores.case_selection for report in case_reports
+        )
+        average_primary_citation = _average(
+            report.component_scores.primary_citation for report in case_reports
+        )
+        average_modifier_selection = _average(
+            report.component_scores.modifier_selection for report in case_reports
+        )
+        average_precedence_assembly = _average(
+            report.component_scores.precedence_assembly for report in case_reports
+        )
+        average_abstention = _average(
+            report.component_scores.abstention for report in case_reports
+        )
+        acceptance = _build_acceptance_summary(
+            cases=self.cases,
+            case_reports=case_reports,
+            thresholds=thresholds,
+            average_expanded_evidence=average_expanded_evidence,
+            average_seed_inference=average_seed_inference,
+            average_case_selection=average_case_selection,
+            average_primary_citation=average_primary_citation,
+            average_modifier_selection=average_modifier_selection,
+            average_precedence_assembly=average_precedence_assembly,
+            average_abstention=average_abstention,
+        )
         return PilotRulingEvalReport(
             suite_id=self.suite_id,
             total_cases=total_cases,
@@ -123,24 +209,14 @@ class PilotRulingEvaluator:
             average_retrieval_nodes=_average(
                 report.component_scores.retrieval_nodes for report in case_reports
             ),
-            average_expanded_evidence=_average(
-                report.component_scores.expanded_evidence for report in case_reports
-            ),
-            average_seed_inference=_average(
-                report.component_scores.seed_inference for report in case_reports
-            ),
-            average_case_selection=_average(
-                report.component_scores.case_selection for report in case_reports
-            ),
-            average_primary_citation=_average(
-                report.component_scores.primary_citation for report in case_reports
-            ),
-            average_modifier_selection=_average(
-                report.component_scores.modifier_selection for report in case_reports
-            ),
-            average_precedence_assembly=_average(
-                report.component_scores.precedence_assembly for report in case_reports
-            ),
+            average_expanded_evidence=average_expanded_evidence,
+            average_seed_inference=average_seed_inference,
+            average_case_selection=average_case_selection,
+            average_primary_citation=average_primary_citation,
+            average_modifier_selection=average_modifier_selection,
+            average_precedence_assembly=average_precedence_assembly,
+            average_abstention=average_abstention,
+            acceptance=acceptance,
             cases=case_reports,
         )
 
@@ -181,6 +257,7 @@ class PilotRulingEvaluator:
                 case.expected_precedence_kinds,
                 [entry.precedence_kind for entry in result.precedence_order],
             ),
+            abstention=_binary_score(case.expected_abstain, result.abstain),
         )
         total_score = (
             component_scores.retrieval_nodes
@@ -190,7 +267,8 @@ class PilotRulingEvaluator:
             + component_scores.primary_citation
             + component_scores.modifier_selection
             + component_scores.precedence_assembly
-        ) / 7.0
+            + component_scores.abstention
+        ) / 8.0
         return PilotRulingEvalCaseReport(
             case_id=case.case_id,
             question=case.question,
@@ -253,6 +331,58 @@ def _binary_score(expected: object, actual: object) -> float:
 
 def _required_subset_score(expected: list[str], actual: list[str]) -> float:
     return 1.0 if set(expected).issubset(set(actual)) else 0.0
+
+
+def _build_acceptance_summary(
+    *,
+    cases: list[PilotRulingEvalCase],
+    case_reports: list[PilotRulingEvalCaseReport],
+    thresholds: PilotRulingAcceptanceThresholds,
+    average_expanded_evidence: float,
+    average_seed_inference: float,
+    average_case_selection: float,
+    average_primary_citation: float,
+    average_modifier_selection: float,
+    average_precedence_assembly: float,
+    average_abstention: float,
+) -> PilotRulingAcceptanceSummary:
+    threshold_results = PilotRulingThresholdResults(
+        expanded_evidence=average_expanded_evidence >= thresholds.min_expanded_evidence,
+        seed_inference=average_seed_inference >= thresholds.min_seed_inference,
+        case_selection=average_case_selection >= thresholds.min_case_selection,
+        primary_citation=average_primary_citation >= thresholds.required_primary_citation,
+        modifier_selection=average_modifier_selection >= thresholds.min_modifier_selection,
+        precedence_assembly=average_precedence_assembly >= thresholds.min_precedence_assembly,
+        abstention=average_abstention >= thresholds.required_abstention,
+    )
+    hard_gate_failures = _collect_hard_gate_failures(cases, case_reports)
+    hard_gate_passed = not hard_gate_failures
+    suite_thresholds_passed = all(threshold_results.model_dump().values())
+    return PilotRulingAcceptanceSummary(
+        thresholds=thresholds,
+        threshold_results=threshold_results,
+        hard_gate_failures=hard_gate_failures,
+        hard_gate_passed=hard_gate_passed,
+        suite_thresholds_passed=suite_thresholds_passed,
+        pilot_ready=hard_gate_passed and suite_thresholds_passed,
+    )
+
+
+def _collect_hard_gate_failures(
+    cases: list[PilotRulingEvalCase],
+    case_reports: list[PilotRulingEvalCaseReport],
+) -> list[str]:
+    failures: list[str] = []
+    for case, report in zip(cases, case_reports):
+        if case.expected_abstain and not report.actual_abstain:
+            failures.append(f"{case.case_id}: answered when the case expected abstention")
+        if not case.expected_abstain and report.actual_abstain:
+            failures.append(f"{case.case_id}: abstained on a supported frozen pilot case")
+        if not case.expected_abstain and report.component_scores.primary_citation < 0.999:
+            failures.append(f"{case.case_id}: primary citation did not match the frozen expectation")
+        if not case.expected_abstain and report.component_scores.precedence_assembly < 0.999:
+            failures.append(f"{case.case_id}: precedence assembly did not match the frozen expectation")
+    return failures
 
 
 def _average(values: Iterable[float]) -> float:
