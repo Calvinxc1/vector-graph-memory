@@ -10,8 +10,8 @@ Status:
 
 Related planning docs:
 
-- [seti-free-action-authority-subsystem-brief.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/seti-free-action-authority-subsystem-brief.md)
-- [seti-pilot-next-steps.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/seti-pilot-next-steps.md)
+- [seti-free-action-authority-subsystem-brief.md](seti-free-action-authority-subsystem-brief.md)
+- [seti-pilot-next-steps.md](seti-pilot-next-steps.md)
 
 ## Purpose
 

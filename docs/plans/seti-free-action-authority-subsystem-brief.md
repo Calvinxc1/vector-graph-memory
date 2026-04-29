@@ -50,8 +50,8 @@ Supporting summary passage:
 
 Relevant source locations already visible in the local extracted texts:
 
-- [seti-faq.txt](/home/jcherry/Documents/storage/git/vector-graph-memory/tests/fixtures/rag_eval/source_documents/extracted/seti-faq.txt#L55)
-- [seti-player-aid-en.txt](/home/jcherry/Documents/storage/git/vector-graph-memory/tests/fixtures/rag_eval/source_documents/extracted/seti-player-aid-en.txt#L1)
+- [seti-faq.txt](../../tests/fixtures/rag_eval/source_documents/extracted/seti-faq.txt#L55)
+- [seti-player-aid-en.txt](../../tests/fixtures/rag_eval/source_documents/extracted/seti-player-aid-en.txt#L1)
 
 ## Authority Model For This Subsystem
 

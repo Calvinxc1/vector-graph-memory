@@ -109,9 +109,9 @@ Current target game progression:
 
 Roadmap and planning documents:
 
-- [rules-lawyer-strategy.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-strategy.md)
-- [rules-lawyer-roadmap.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-roadmap.md)
-- [seti-pilot-next-steps.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/seti-pilot-next-steps.md)
+- [rules-lawyer-strategy.md](docs/plans/rules-lawyer-strategy.md)
+- [rules-lawyer-roadmap.md](docs/plans/rules-lawyer-roadmap.md)
+- [seti-pilot-next-steps.md](docs/plans/seti-pilot-next-steps.md)
 
 ## Current State And Known Gaps
 
@@ -272,9 +272,21 @@ If you want to use an external Open WebUI instance, configure:
 
 - base URL: `http://localhost:8052/vgm-api/v1`
 - API key: any value for the current default local setup
-- model: `vector-graph-memory`
+- model: `vector-graph-memory` for the memory-oriented chat path
+- model: `seti-rules-lawyer` for the live `SETI` pilot ruling path through Open WebUI
 
 If Open WebUI is on the same Docker network and you want to bypass the proxy, use `http://api:8000/v1` instead.
+
+## Validation
+
+For local validation, use the same dependency shape as CI:
+
+```bash
+uv sync --all-extras
+uv run pytest
+```
+
+The full extras install matters because the test suite includes API-path coverage that imports optional API dependencies.
 
 ## DSPy Synthesis Status
 
@@ -293,15 +305,15 @@ What it does not yet mean:
 - the DSPy path is still grounded-answer infrastructure, not a full ruling engine
 - successful eval runs do not by themselves validate the future game-specific ingestion pipeline
 
-See [dspy-rag-implementation.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/dspy-rag-implementation.md) for the implementation plan.
+See [dspy-rag-implementation.md](docs/plans/dspy-rag-implementation.md) for the implementation plan.
 
 ## Docs
 
-- [API.md](/home/jcherry/Documents/storage/git/vector-graph-memory/API.md): current API behavior, setup, and caveats
-- [dspy-rag-implementation.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/dspy-rag-implementation.md): DSPy synthesis implementation plan
-- [rules-lawyer-strategy.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-strategy.md): product strategy for the rules-lawyer direction
-- [rules-lawyer-roadmap.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-roadmap.md): staged game roadmap
-- [seti-pilot-next-steps.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/seti-pilot-next-steps.md): immediate `SETI` pilot plan
+- [API.md](API.md): current API behavior, setup, and caveats
+- [dspy-rag-implementation.md](docs/plans/dspy-rag-implementation.md): DSPy synthesis implementation plan
+- [rules-lawyer-strategy.md](docs/plans/rules-lawyer-strategy.md): product strategy for the rules-lawyer direction
+- [rules-lawyer-roadmap.md](docs/plans/rules-lawyer-roadmap.md): staged game roadmap
+- [seti-pilot-next-steps.md](docs/plans/seti-pilot-next-steps.md): immediate `SETI` pilot plan
 
 ## Near-Term Development Priorities
 
@@ -332,4 +344,4 @@ Because of that, existing code and documentation should be treated as potentiall
 
 ## License
 
-See [LICENSE](/home/jcherry/Documents/storage/git/vector-graph-memory/LICENSE) for details.
+See [LICENSE](LICENSE) for details.
