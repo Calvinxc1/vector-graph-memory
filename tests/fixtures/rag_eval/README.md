@@ -47,10 +47,15 @@ Manual seed fixtures:
   - suite manifest that groups both tracked seed slices for extraction evaluation and DSPy compilation
 - `scripts/import_manual_seed.py`
   - importer for loading a manual seed fixture into the current Qdrant plus JanusGraph backend
+  - runs the generic rule-load audit before import unless `--skip-audit` is used for local debugging
   - skips existing `node_id` and `edge_id` records to avoid duplicate JanusGraph inserts on rerun
 - `scripts/materialize_rule_extraction_seed.py`
   - converts a validated `RuleExtractionBundle` JSON into manifest plus node/edge JSONL files
+  - runs the generic rule-load audit before writing seed files unless `--allow-audit-fail` is used for local debugging
   - intended bridge between accepted extractor output and the existing importer
+- `scripts/audit_rule_load.py`
+  - standalone pre-import audit for a `RuleExtractionBundle` JSON or seed manifest
+  - checks source coverage, direct source-to-rule grounding, edge integrity, schema completeness, and authority metadata
 - `scripts/verify_manual_seed.py`
   - verifier for checking that a manual seed fixture is actually present in live Qdrant plus JanusGraph storage
   - also checks that the required node set for each frozen landing-orbiter support path is present

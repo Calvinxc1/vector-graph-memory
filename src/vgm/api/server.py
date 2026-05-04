@@ -4,23 +4,25 @@ import asyncio
 import json
 import os
 import logging
+from pathlib import Path
+from threading import Lock
 from typing import Any, Dict, List, Optional, Literal, cast
 from datetime import datetime
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 from gremlin_python.driver import client as gremlin_client  # type: ignore[import-untyped]
 from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
 from dotenv import load_dotenv
 
 from .. import __version__ as PACKAGE_VERSION
-from ..MemoryAgent import MemoryAgent
+from ..MemoryAgent import MemoryAgent, MemoryRunTrace
 from ..config import MemoryConfig, MemoryTriggerConfig, AuditConfig
 from ..rag import (
-    ConversationTurn,
     DEFAULT_EVAL_SOURCE_DIR,
     DEFAULT_EVAL_SUITE_PATH,
     DspyArtifactStore,
@@ -111,6 +113,27 @@ class ModelList(BaseModel):
     data: List[ModelInfo]
 
 
+class TraceCandidateSummary(BaseModel):
+    """Compact case-candidate summary for UI traces and request logs."""
+
+    question_id: str
+    question_score: float
+    evidence_score: int
+    matched_reference_count: int
+
+
+class RequestTraceLogEntry(BaseModel):
+    """Persistent request-scoped diagnostic log entry."""
+
+    request_id: str
+    session_id: str
+    model: str
+    route: str
+    stream: bool
+    created_at: str
+    trace: Dict[str, Any] = Field(default_factory=dict)
+
+
 # --- Global state ---
 
 
@@ -132,9 +155,12 @@ class AppState:
 
 state = AppState()
 logger = logging.getLogger(__name__)
+_REQUEST_TRACE_WRITE_LOCK = Lock()
 
 MEMORY_CHAT_MODEL_ID = "vector-graph-memory"
 RULES_CHAT_MODEL_ID = "seti-rules-lawyer"
+DEFAULT_API_TRACE_LOG_PATH = "./logs/api"
+RULES_CASE_SELECTION_THRESHOLD = 0.14
 
 
 _TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
@@ -395,6 +421,7 @@ async def lifespan(_app: FastAPI):
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+    logger.info("API request trace log path: %s", _request_trace_log_path())
 
     print("🚀 Initializing Vector Graph Memory API...")
 
@@ -747,34 +774,147 @@ def _format_rules_ruling_for_chat(result: RulesRulingResult) -> str:
     return "\n".join(lines)
 
 
+def _request_trace_log_path() -> Path:
+    configured = os.getenv("API_TRACE_LOG_PATH", DEFAULT_API_TRACE_LOG_PATH)
+    return Path(os.path.expanduser(configured)).resolve()
+
+
+def _append_request_trace_log(entry: RequestTraceLogEntry) -> str:
+    base_dir = _request_trace_log_path()
+    dated_dir = base_dir / "requests" / datetime.now().strftime("%Y-%m-%d")
+    log_path = dated_dir / f"{entry.request_id}.json"
+    dated_dir.mkdir(parents=True, exist_ok=True)
+    with _REQUEST_TRACE_WRITE_LOCK:
+        with open(log_path, "w", encoding="utf-8") as handle:
+            json.dump(entry.model_dump(mode="json"), handle, indent=2)
+            handle.write("\n")
+    return str(log_path)
+
+
+def _seed_origin_label(
+    inspection: LivePilotRulingInspection,
+    *,
+    requested_seed_id: str | None,
+) -> str:
+    if requested_seed_id:
+        return "request override"
+    if inspection.seed_inference.selected_seed_id:
+        return "question inference"
+    if inspection.evidence.seed_id:
+        return "retrieved evidence majority"
+    return "unresolved"
+
+
+def _candidate_summaries(
+    inspection: LivePilotRulingInspection,
+    *,
+    limit: int = 3,
+) -> list[TraceCandidateSummary]:
+    return [
+        TraceCandidateSummary(
+            question_id=candidate.question_id,
+            question_score=candidate.question_score,
+            evidence_score=candidate.evidence_score,
+            matched_reference_count=len(candidate.matched_reference_ids),
+        )
+        for candidate in inspection.candidate_cases[:limit]
+    ]
+
+
+def _rules_abstain_kind(
+    inspection: LivePilotRulingInspection,
+    result: RulesRulingResult,
+) -> str | None:
+    if not result.abstain:
+        return None
+    if inspection.premise_screen.status != "valid":
+        return "invalid_premise"
+    if not inspection.evidence.nodes:
+        return "no_evidence"
+    if inspection.selected_seed_id is None:
+        return "seed_unresolved"
+    if inspection.candidate_cases and inspection.selected_case is None:
+        return "near_miss"
+    return "unsupported"
+
+
 def _format_rules_trace_for_thinking(
     inspection: LivePilotRulingInspection,
     result: RulesRulingResult,
+    *,
+    request_id: str,
+    log_path: str,
+    requested_seed_id: str | None = None,
 ) -> str:
     lines = ["<think>", "Trace summary:"]
 
+    lines.append(f"- Request: {request_id}")
+    lines.append(f"- Log file: {log_path}")
+    lines.append("- Route: seti-rules-lawyer -> live pilot ruling")
+
     if inspection.selected_seed_id:
-        seed_line = f"- Seed: {inspection.selected_seed_id}"
+        seed_line = (
+            f"- Seed: {inspection.selected_seed_id}"
+            f" via {_seed_origin_label(inspection, requested_seed_id=requested_seed_id)}"
+        )
         if inspection.seed_inference.selected_score > 0:
             seed_line += f" (score {inspection.seed_inference.selected_score:.2f})"
         lines.append(seed_line)
+    elif inspection.seed_inference.candidates:
+        lines.append(
+            "- Seed inference did not clear threshold; "
+            f"top score was {inspection.seed_inference.candidates[0].score:.2f}."
+        )
+
+    if inspection.issue_inference.issue_type != "unsupported_unknown":
+        lines.append(
+            "- Question issue: "
+            f"{inspection.issue_inference.issue_type} "
+            f"(confidence {inspection.issue_inference.confidence:.2f})"
+        )
+    if inspection.premise_screen.status != "valid":
+        lines.append(
+            "- Premise screen: "
+            f"{inspection.premise_screen.status} "
+            f"(confidence {inspection.premise_screen.confidence:.2f})"
+        )
+        if inspection.premise_screen.reason:
+            lines.append(f"- Premise reason: {inspection.premise_screen.reason}")
 
     if inspection.selected_case:
         lines.append(
             "- Matched case: "
             f"{inspection.selected_case.question_id} "
             f"(question {inspection.selected_case.question_score:.2f}, "
-            f"evidence {inspection.selected_case.evidence_score})"
+            f"evidence {inspection.selected_case.evidence_score}, "
+            f"matched refs {len(inspection.selected_case.matched_reference_ids)})"
         )
     elif inspection.candidate_cases:
         top_case = inspection.candidate_cases[0]
         lines.append(
-            "- No supported case cleared the selection threshold; "
+            f"- No supported case cleared threshold {RULES_CASE_SELECTION_THRESHOLD:.2f}; "
             f"top candidate was {top_case.question_id} "
-            f"(question {top_case.question_score:.2f}, evidence {top_case.evidence_score})."
+            f"(question {top_case.question_score:.2f}, evidence {top_case.evidence_score}, "
+            f"matched refs {len(top_case.matched_reference_ids)})."
         )
     else:
         lines.append("- No supported case candidates were available for this question.")
+
+    lines.append(
+        "- Retrieval: "
+        f"{len(inspection.evidence.retrieved_node_ids)} initial nodes, "
+        f"{len(inspection.evidence.expanded_node_ids)} expanded nodes, "
+        f"{len(inspection.evidence.edges)} edges traversed."
+    )
+
+    candidate_summaries = _candidate_summaries(inspection)
+    if candidate_summaries:
+        candidate_line = "; ".join(
+            f"{candidate.question_id} (q={candidate.question_score:.2f}, "
+            f"e={candidate.evidence_score}, refs={candidate.matched_reference_count})"
+            for candidate in candidate_summaries
+        )
+        lines.append(f"- Top candidates: {candidate_line}")
 
     if result.primary_citation:
         lines.append(f"- Primary authority: {_format_rule_citation(result.primary_citation)}")
@@ -795,9 +935,83 @@ def _format_rules_trace_for_thinking(
     if result.precedence_order:
         lines.append(f"- Control rationale: {result.precedence_order[0].summary}")
 
+    if inspection.selected_case_issue_mismatch_reason:
+        lines.append(f"- Fit gate: {inspection.selected_case_issue_mismatch_reason}")
+
+    abstain_kind = _rules_abstain_kind(inspection, result)
     if result.abstain and result.uncertainty:
+        if abstain_kind is not None:
+            lines.append(f"- Abstain kind: {abstain_kind}")
         lines.append(f"- Abstain reason: {result.uncertainty}")
 
+    lines.append("</think>")
+    return "\n".join(lines)
+
+
+def _format_memory_trace_for_thinking(
+    *,
+    request_id: str,
+    log_path: str,
+    route: str,
+    rag_context: Any | None,
+    dspy_attempted: bool,
+    dspy_used: bool,
+    dspy_backend: str | None,
+    dspy_failure: str | None,
+    memory_trace: MemoryRunTrace | None,
+    new_proposal_count: int,
+    final_answer_source: str,
+) -> str:
+    lines = ["<think>", "Trace summary:"]
+    lines.append(f"- Request: {request_id}")
+    lines.append(f"- Log file: {log_path}")
+    lines.append(f"- Route: {route}")
+
+    if rag_context is not None:
+        lines.append(
+            "- RAG context: "
+            f"{len(rag_context.retrieved_passages)} passages, "
+            f"{len(rag_context.conversation_history)} history turns."
+        )
+    else:
+        lines.append("- RAG context: not built.")
+
+    if dspy_attempted:
+        if dspy_used:
+            lines.append(
+                f"- DSPy synthesis: returned answer via {dspy_backend or 'unknown backend'}."
+            )
+        elif dspy_failure:
+            lines.append(f"- DSPy synthesis: failed and fell back ({dspy_failure}).")
+        else:
+            lines.append("- DSPy synthesis: attempted but returned no answer; fell back.")
+    else:
+        lines.append("- DSPy synthesis: not attempted.")
+
+    if memory_trace is not None:
+        lines.append(
+            "- Memory review trigger: "
+            f"{memory_trace.trigger_mode}, activated={memory_trace.memory_check_triggered}."
+        )
+        if memory_trace.tool_calls:
+            lines.append(
+                "- Tools called: "
+                + ", ".join(tool.tool_name for tool in memory_trace.tool_calls)
+            )
+            for tool in memory_trace.tool_calls[:3]:
+                args_summary = ", ".join(f"{key}={value!r}" for key, value in tool.arguments.items())
+                lines.append(
+                    f"- Tool detail: {tool.tool_name}({args_summary}) -> {tool.result_summary}"
+                )
+        else:
+            lines.append("- Tools called: none.")
+    else:
+        lines.append("- MemoryAgent trace: unavailable.")
+
+    if new_proposal_count:
+        lines.append(f"- Pending memory proposals added: {new_proposal_count}")
+
+    lines.append(f"- Final answer source: {final_answer_source}")
     lines.append("</think>")
     return "\n".join(lines)
 
@@ -862,7 +1076,7 @@ def _split_stream_sections(assistant_response: str) -> list[str]:
     return streamed_sections
 
 
-def _build_rules_streaming_response(
+def _build_streaming_chat_response(
     *,
     model: str,
     session_id: str,
@@ -906,10 +1120,6 @@ async def list_models() -> ModelList:
     return ModelList(
         data=[
             ModelInfo(
-                id=MEMORY_CHAT_MODEL_ID,
-                created=created,
-            ),
-            ModelInfo(
                 id=RULES_CHAT_MODEL_ID,
                 created=created,
             ),
@@ -926,6 +1136,7 @@ async def chat_completions(
         raise HTTPException(status_code=400, detail="No messages provided")
 
     session_id = request.user or "default"
+    request_id = f"{session_id}-{uuid4().hex[:8]}"
     latest_user_message = next(
         (message.content for message in reversed(request.messages) if message.role == "user"),
         None,
@@ -938,23 +1149,46 @@ async def chat_completions(
             raise HTTPException(status_code=503, detail="Rules ruling engine not initialized")
         try:
             rules_request = RulesRulingRequest(question=latest_user_message)
-            inspection = (
-                state.rules_ruling_engine.inspect_request(rules_request)
-                if request.stream
-                else None
-            )
+            inspection = state.rules_ruling_engine.inspect_request(rules_request)
             result = state.rules_ruling_engine.answer(rules_request)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Rules ruling error: {exc}") from exc
         assistant_response = _format_rules_ruling_for_chat(result)
+        log_path = _append_request_trace_log(
+            RequestTraceLogEntry(
+                request_id=request_id,
+                session_id=session_id,
+                model=request.model,
+                route="seti-rules-lawyer",
+                stream=bool(request.stream),
+                created_at=datetime.now().isoformat(),
+                trace={
+                    "question": rules_request.question,
+                    "seed_origin": _seed_origin_label(
+                        inspection,
+                        requested_seed_id=rules_request.seed_id,
+                    ),
+                    "selection_threshold": RULES_CASE_SELECTION_THRESHOLD,
+                    "candidate_summaries": [
+                        candidate.model_dump(mode="json")
+                        for candidate in _candidate_summaries(inspection)
+                    ],
+                    "inspection": inspection.model_dump(mode="json"),
+                    "result": result.model_dump(mode="json"),
+                    "abstain_kind": _rules_abstain_kind(inspection, result),
+                },
+            )
+        )
         if request.stream:
-            return _build_rules_streaming_response(
+            return _build_streaming_chat_response(
                 model=request.model,
                 session_id=session_id,
-                trace_summary=(
-                    _format_rules_trace_for_thinking(inspection, result)
-                    if inspection is not None
-                    else None
+                trace_summary=_format_rules_trace_for_thinking(
+                    inspection,
+                    result,
+                    request_id=request_id,
+                    log_path=log_path,
+                    requested_seed_id=rules_request.seed_id,
                 ),
                 assistant_response=assistant_response,
             )
@@ -965,107 +1199,20 @@ async def chat_completions(
             assistant_response=assistant_response,
         )
 
-    if request.model != MEMORY_CHAT_MODEL_ID:
+    if request.model == MEMORY_CHAT_MODEL_ID:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Unsupported model '{request.model}'. "
-                f"Available models: {MEMORY_CHAT_MODEL_ID}, {RULES_CHAT_MODEL_ID}"
+                f"Model '{MEMORY_CHAT_MODEL_ID}' is temporarily disabled. "
+                f"Use '{RULES_CHAT_MODEL_ID}' instead."
             ),
         )
-
-    if not state.agent:
-        raise HTTPException(status_code=503, detail="Agent not initialized")
-
-    rag_context = None
-    if (state.rag_context_enabled or state.rag_synthesis_enabled) and state.rag_context_builder:
-        try:
-            rag_messages = [
-                ConversationTurn(role=msg.role, content=msg.content)
-                for msg in request.messages
-            ]
-            rag_context = state.rag_context_builder.build_from_messages(
-                messages=rag_messages,
-                session_id=session_id,
-            )
-            logger.info(
-                "[RAG] Built context for session=%s passages=%d history_turns=%d",
-                session_id,
-                len(rag_context.retrieved_passages),
-                len(rag_context.conversation_history),
-            )
-        except Exception:
-            logger.exception(
-                "[RAG] Failed to build deterministic context for session=%s",
-                session_id,
-            )
-            rag_context = None
-
-    if state.rag_synthesis_enabled and state.rag_compile_manager:
-        _maybe_start_background_compile()
-
-    if state.rag_synthesis_enabled and state.rag_synthesizer and rag_context:
-        try:
-            rag_result = state.rag_synthesizer.synthesize(rag_context)
-            logger.info(
-                "[RAG] Synthesized answer for session=%s backend=%s cited_sources=%d abstain=%s",
-                session_id,
-                rag_result.backend,
-                len(rag_result.cited_source_ids),
-                rag_result.abstain,
-            )
-            if rag_result.answer:
-                return _build_chat_completion_response(
-                    model=request.model,
-                    session_id=session_id,
-                    prompt_text=rag_context.retrieval_query,
-                    assistant_response=rag_result.answer,
-                )
-            logger.warning(
-                "[RAG] Baseline DSPy synthesizer returned an empty answer for session=%s; falling back",
-                session_id,
-            )
-        except Exception:
-            logger.exception(
-                "[RAG] DSPy synthesis failed for session=%s; falling back to MemoryAgent",
-                session_id,
-            )
-
-    # Build conversation context from message history
-    # Format: "Previous context:\nUser: ...\nAssistant: ...\n\nCurrent question: ..."
-    if len(request.messages) > 1:
-        # Multi-turn conversation - include history for context
-        context_parts = ["Here's our conversation so far:"]
-        for msg in request.messages[:-1]:
-            role = "User" if msg.role == "user" else "Assistant"
-            context_parts.append(f"{role}: {msg.content}")
-        context_parts.append(f"\nCurrent question: {request.messages[-1].content}")
-        user_message = "\n".join(context_parts)
-    else:
-        # Single message
-        user_message = request.messages[-1].content
-
-    # Run agent
-    try:
-        result = state.agent.run(user_message, session_id=session_id)
-        assistant_response = result.output
-
-        # Track any new proposals for this session
-        current_proposals = set(state.agent.pending_proposals.keys())
-        session_proposals = set(state.session_proposals.get(session_id, []))
-        new_proposals = current_proposals - session_proposals
-
-        if new_proposals:
-            state.session_proposals[session_id] = list(current_proposals)
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
-
-    return _build_chat_completion_response(
-        model=request.model,
-        session_id=session_id,
-        prompt_text=user_message,
-        assistant_response=assistant_response,
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Unsupported model '{request.model}'. "
+            f"Available model: {RULES_CHAT_MODEL_ID}"
+        ),
     )
 
 

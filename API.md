@@ -93,20 +93,14 @@ Note: `start_api.sh` currently checks `OPENAI_API_KEY` from the shell environmen
    - name: `Vector Graph Memory`
    - base URL: `http://localhost:8052/vgm-api/v1`
    - API key: any value for the current default setup
-4. Save and select one of these models:
-   - `vector-graph-memory` for the memory-oriented chat path
+4. Save and select the exposed model:
    - `seti-rules-lawyer` for the live `SETI` pilot ruling path
 
 ### Usage
 
-Through Open WebUI, the current agent can:
+Through Open WebUI, the currently exposed chat path is the live `SETI` pilot ruling engine. The legacy `vector-graph-memory` chat model is temporarily disabled at the OpenAI-compatible API surface so the UI cannot accidentally route into the memory-oriented interface during rules-lawyer testing.
 
-- search memory for relevant context
-- answer with either the baseline path or feature-flagged DSPy path
-- propose storing information in memory
-- record memory actions in the audit log
-
-When `seti-rules-lawyer` is selected, Open WebUI routes the latest user message through the pilot ruling engine and renders the formatted ruling, citations, and precedence chain in the standard chat surface.
+When `seti-rules-lawyer` is selected, Open WebUI routes the latest user message through the pilot ruling engine and renders the formatted ruling, citations, precedence chain, and streamed Thinking trace in the standard chat surface.
 
 ## DSPy Grounded Synthesis Status
 
@@ -136,10 +130,14 @@ See [dspy-rag-implementation.md](docs/plans/dspy-rag-implementation.md) for the 
 
 Standard OpenAI chat completions endpoint. The selected `model` determines which backend handles the request:
 
-- `vector-graph-memory`: memory-oriented chat with the baseline or feature-flagged DSPy path
 - `seti-rules-lawyer`: live `SETI` pilot ruling path rendered into chat output
+- `vector-graph-memory`: currently rejected as temporarily disabled
 
-For `seti-rules-lawyer`, `stream: true` now returns OpenAI-style SSE chunks for Open WebUI compatibility. The streamed output begins with a concise `<think>...</think>` trace summary derived from the typed inspection path, so Open WebUI can render it in the collapsible Thinking UI before the visible ruling text. The ruling is still computed before streaming begins, so this improves rendering UX rather than first-token latency.
+For `seti-rules-lawyer`, `stream: true` returns OpenAI-style SSE chunks for Open WebUI compatibility. The streamed output begins with a concise `<think>...</think>` diagnostic summary before the visible answer text:
+
+- `seti-rules-lawyer` shows route, seed origin, premise-screen results for invalid scenarios, inferred question issue, retrieval counts, top candidate cases, authority selection, fit-gate rationale, abstain details, and the per-request trace file path for deeper inspection.
+
+The ruling or answer is still computed before streaming begins, so this improves inspection UX rather than first-token latency. Detailed per-request traces are written under `API_TRACE_LOG_PATH` (default: `./logs/api`) as one JSON file per request, partitioned by date, for example `./logs/api/requests/2026-05-01/<request-id>.json`.
 
 Request:
 
@@ -192,12 +190,6 @@ Response:
 {
   "object": "list",
   "data": [
-    {
-      "id": "vector-graph-memory",
-      "object": "model",
-      "created": 1234567890,
-      "owned_by": "vector-graph-memory"
-    },
     {
       "id": "seti-rules-lawyer",
       "object": "model",
@@ -306,7 +298,7 @@ The API server currently:
 1. Initializes Qdrant, JanusGraph, and the `MemoryAgent`.
 2. Receives OpenAI-compatible chat requests.
 3. Uses the `user` field as the session identifier.
-4. Routes `vector-graph-memory` requests through either the baseline answer path or the feature-flagged DSPy synthesis path.
+4. Rejects `vector-graph-memory` chat requests while that legacy interface is temporarily disabled.
 5. Routes `seti-rules-lawyer` requests through the live pilot ruling engine.
 6. Exposes proposal, confirmation, and audit endpoints for memory control.
 

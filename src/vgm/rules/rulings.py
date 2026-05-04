@@ -160,11 +160,50 @@ class PilotSeedInference(BaseModel):
     candidates: list[PilotSeedScore] = Field(default_factory=list)
 
 
+PilotIssueType = Literal[
+    "orbiter_later_landing",
+    "opponent_orbiter_discount",
+    "moon_discount_extension",
+    "opponent_orbiter_moon_discount",
+    "general_free_action_timing",
+    "scan_interrupt_timing",
+    "triggered_income_free_action_nesting",
+    "player_aid_timing_conflict",
+    "retroactive_state_change",
+    "unsupported_unknown",
+]
+
+
+PilotPremiseStatus = Literal[
+    "valid",
+    "invalid_orbiter_location",
+    "invalid_turn_sequence",
+]
+
+
+class PilotIssueInference(BaseModel):
+    """Typed issue-classification result for candidate-fit validation."""
+
+    issue_type: PilotIssueType = "unsupported_unknown"
+    confidence: float = 0.0
+    matched_signals: list[str] = Field(default_factory=list)
+
+
+class PilotPremiseScreen(BaseModel):
+    """Typed premise-screen result for invalid scenario rejection."""
+
+    status: PilotPremiseStatus = "valid"
+    confidence: float = 0.0
+    matched_signals: list[str] = Field(default_factory=list)
+    reason: str | None = None
+
+
 class PilotCaseMatch(BaseModel):
     """One candidate pilot case scored against question and retrieved evidence."""
 
     question_id: str
     seed_id: str
+    issue_type: PilotIssueType
     question_score: float
     evidence_score: int
     total_score: float
@@ -178,15 +217,20 @@ class LivePilotRulingInspection(BaseModel):
     normalized_question: str
     evidence: RetrievedRulingEvidence
     seed_inference: PilotSeedInference
+    premise_screen: PilotPremiseScreen = Field(default_factory=PilotPremiseScreen)
+    issue_inference: PilotIssueInference = Field(default_factory=PilotIssueInference)
     selected_seed_id: str | None = None
     selected_case: PilotCaseMatch | None = None
     candidate_cases: list[PilotCaseMatch] = Field(default_factory=list)
+    selected_case_issue_match: bool | None = None
+    selected_case_issue_mismatch_reason: str | None = None
 
 
 @dataclass(frozen=True)
 class _PilotCaseSpec:
     question_id: str
     seed_id: str
+    issue_type: PilotIssueType
     accepted_questions: tuple[str, ...]
     ruling: str
     primary_rule_id: str
@@ -416,15 +460,28 @@ class LivePilotRulingEngine:
                     "Live retrieval found evidence, but it could not be assigned to one supported pilot seed."
                 ),
             )
-        case = self._case_spec_by_question_id(inspection.selected_case.question_id) if inspection.selected_case else None
-        if case is None:
+        if inspection.premise_screen.status != "valid":
             return self._abstain(
                 question=request.question,
                 seed_id=seed_id,
                 subsystem=evidence.subsystem or self._subsystem_for_seed(seed_id),
                 question_id="unsupported_question",
                 uncertainty=(
-                    "The retrieved evidence was not strong enough to map this question to one supported pilot ruling."
+                    inspection.premise_screen.reason
+                    or "The question's stated premise is not valid for the supported pilot rules."
+                ),
+            )
+        case = self._case_spec_by_question_id(inspection.selected_case.question_id) if inspection.selected_case else None
+        if case is None:
+            mismatch_reason = inspection.selected_case_issue_mismatch_reason
+            return self._abstain(
+                question=request.question,
+                seed_id=seed_id,
+                subsystem=evidence.subsystem or self._subsystem_for_seed(seed_id),
+                question_id="unsupported_question",
+                uncertainty=(
+                    mismatch_reason
+                    or "The retrieved evidence was not strong enough to map this question to one supported pilot ruling."
                 ),
             )
 
@@ -443,6 +500,8 @@ class LivePilotRulingEngine:
         """Expose live retrieval and selection stages as typed intermediate output."""
 
         normalized_question = _normalize_question(request.question)
+        premise_screen = _screen_question_premise(normalized_question)
+        issue_inference = _infer_issue_type(normalized_question)
         evidence = self._retrieve_evidence(
             question=request.question,
             seed_id=request.seed_id,
@@ -452,18 +511,36 @@ class LivePilotRulingEngine:
         selected_seed_id = request.seed_id or seed_inference.selected_seed_id or evidence.seed_id
         candidate_cases = (
             self._rank_cases(seed_id=selected_seed_id, question=request.question, evidence=evidence)
-            if selected_seed_id is not None
+            if selected_seed_id is not None and premise_screen.status == "valid"
             else []
         )
-        selected_case = candidate_cases[0] if candidate_cases and candidate_cases[0].question_score >= 0.14 else None
+        top_case = (
+            candidate_cases[0]
+            if candidate_cases and candidate_cases[0].question_score >= 0.14
+            else None
+        )
+        selected_case_issue_match, selected_case_issue_mismatch_reason = _validate_case_issue_fit(
+            issue_inference,
+            top_case,
+            premise_is_valid=premise_screen.status == "valid",
+        )
+        selected_case = (
+            top_case
+            if top_case is not None and selected_case_issue_match is not False
+            else None
+        )
         return LivePilotRulingInspection(
             question=request.question,
             normalized_question=normalized_question,
             evidence=evidence,
             seed_inference=seed_inference,
+            premise_screen=premise_screen,
+            issue_inference=issue_inference,
             selected_seed_id=selected_seed_id,
             selected_case=selected_case,
             candidate_cases=candidate_cases,
+            selected_case_issue_match=selected_case_issue_match,
+            selected_case_issue_mismatch_reason=selected_case_issue_mismatch_reason,
         )
 
     def _retrieve_evidence(
@@ -537,9 +614,6 @@ class LivePilotRulingEngine:
         question: str,
         evidence: RetrievedRulingEvidence,
     ) -> RulesRulingResult:
-        sources = evidence.source_nodes
-        rules = evidence.rule_nodes
-
         primary_rule = self._node_from_evidence(evidence, case.primary_rule_id)
         primary_citation = self._node_from_evidence(evidence, case.primary_source_id)
         if primary_rule is None or primary_citation is None:
@@ -678,6 +752,7 @@ class LivePilotRulingEngine:
                 PilotCaseMatch(
                     question_id=case.question_id,
                     seed_id=case.seed_id,
+                    issue_type=case.issue_type,
                     question_score=question_score,
                     evidence_score=evidence_score,
                     total_score=total,
@@ -845,11 +920,178 @@ def _meaningful_tokens(text: str) -> set[str]:
     return {token for token in text.split() if token and token not in stopwords}
 
 
+def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
+    return any(term in text for term in terms)
+
+
+def _infer_issue_type(normalized_question: str) -> PilotIssueInference:
+    matched_signals: list[str] = []
+
+    if _contains_any(normalized_question, ("retroactive", "recalculate", "refund")):
+        matched_signals.append("retroactive")
+    if _contains_any(normalized_question, ("later", "after", "already")):
+        matched_signals.append("temporal")
+    if _contains_any(normalized_question, ("discount", "cost", "cheaper")):
+        matched_signals.append("discount")
+    if "scan" in normalized_question:
+        matched_signals.append("scan")
+    if _contains_any(normalized_question, ("publicity", "spend publicity")):
+        matched_signals.append("publicity")
+    if _contains_any(normalized_question, ("no limit", "player aid", "summary")):
+        matched_signals.append("player_aid")
+    if _contains_any(normalized_question, ("income", "placing data", "place more data")):
+        matched_signals.append("income")
+    if _contains_any(normalized_question, ("moon", "moons")):
+        matched_signals.append("moon")
+    if _contains_any(normalized_question, ("opponent", "another player")):
+        matched_signals.append("opponent")
+    if _contains_any(normalized_question, ("interrupt", "pause", "continue", "finish", "go back")):
+        matched_signals.append("interrupt")
+    if _contains_any(normalized_question, ("orbiter", "orbiters", "land")):
+        matched_signals.append("orbiter_land")
+
+    if "retroactive" in matched_signals and "discount" in matched_signals:
+        return PilotIssueInference(
+            issue_type="retroactive_state_change",
+            confidence=0.95,
+            matched_signals=matched_signals,
+        )
+    if {"player_aid", "interrupt"} & set(matched_signals) and "player_aid" in matched_signals:
+        return PilotIssueInference(
+            issue_type="player_aid_timing_conflict",
+            confidence=0.95,
+            matched_signals=matched_signals,
+        )
+    if "income" in matched_signals:
+        return PilotIssueInference(
+            issue_type="triggered_income_free_action_nesting",
+            confidence=0.9,
+            matched_signals=matched_signals,
+        )
+    if "scan" in matched_signals:
+        return PilotIssueInference(
+            issue_type="scan_interrupt_timing",
+            confidence=0.9,
+            matched_signals=matched_signals,
+        )
+    if "moon" in matched_signals and "opponent" in matched_signals and "discount" in matched_signals:
+        return PilotIssueInference(
+            issue_type="opponent_orbiter_moon_discount",
+            confidence=0.95,
+            matched_signals=matched_signals,
+        )
+    if "moon" in matched_signals and "discount" in matched_signals:
+        return PilotIssueInference(
+            issue_type="moon_discount_extension",
+            confidence=0.9,
+            matched_signals=matched_signals,
+        )
+    if "opponent" in matched_signals and "discount" in matched_signals:
+        return PilotIssueInference(
+            issue_type="opponent_orbiter_discount",
+            confidence=0.9,
+            matched_signals=matched_signals,
+        )
+    if (
+        "orbiter_land" in matched_signals
+        and "temporal" in matched_signals
+        and "discount" not in matched_signals
+        and "moon" not in matched_signals
+    ):
+        return PilotIssueInference(
+            issue_type="orbiter_later_landing",
+            confidence=0.8,
+            matched_signals=matched_signals,
+        )
+    if "interrupt" in matched_signals:
+        return PilotIssueInference(
+            issue_type="general_free_action_timing",
+            confidence=0.7,
+            matched_signals=matched_signals,
+        )
+    return PilotIssueInference(
+        issue_type="unsupported_unknown",
+        confidence=0.0,
+        matched_signals=matched_signals,
+    )
+
+
+def _screen_question_premise(normalized_question: str) -> PilotPremiseScreen:
+    matched_signals: list[str] = []
+
+    if _contains_any(
+        normalized_question,
+        (
+            "orbiter is on the moon",
+            "orbiter on the moon",
+            "orbiters on the moon",
+            "moon instead of the planet",
+            "at the moon instead of the planet",
+        ),
+    ):
+        matched_signals.append("orbiter_on_moon")
+        return PilotPremiseScreen(
+            status="invalid_orbiter_location",
+            confidence=0.98,
+            matched_signals=matched_signals,
+            reason=(
+                "The question assumes an orbiter can be on a moon, but the supported pilot rules only "
+                "place orbiters at planets and use moons only for landing."
+            ),
+        )
+
+    if _contains_any(
+        normalized_question,
+        (
+            "before i pay",
+            "before you pay",
+            "arrives before i pay",
+            "arrives before you pay",
+            "declare the landing",
+            "declare landing",
+        ),
+    ):
+        matched_signals.append("turn_sequence")
+        return PilotPremiseScreen(
+            status="invalid_turn_sequence",
+            confidence=0.9,
+            matched_signals=matched_signals,
+            reason=(
+                "The question assumes another game-state change can interrupt the unresolved landing cost, "
+                "but the supported pilot rules treat turns and action resolution sequentially."
+            ),
+        )
+
+    return PilotPremiseScreen(status="valid", confidence=0.0, matched_signals=matched_signals)
+
+
+def _validate_case_issue_fit(
+    issue_inference: PilotIssueInference,
+    candidate_case: PilotCaseMatch | None,
+    *,
+    premise_is_valid: bool,
+) -> tuple[bool | None, str | None]:
+    if not premise_is_valid:
+        return None, None
+    if candidate_case is None:
+        return None, None
+    if issue_inference.issue_type == "unsupported_unknown":
+        return True, None
+    if issue_inference.issue_type == candidate_case.issue_type:
+        return True, None
+    return (
+        False,
+        f"Question issue '{issue_inference.issue_type}' does not match candidate case issue "
+        f"'{candidate_case.issue_type}'.",
+    )
+
+
 def _build_case_specs() -> tuple[_PilotCaseSpec, ...]:
     return (
         _PilotCaseSpec(
             question_id="seti-rules-001-orbiter-cannot-land",
             seed_id="seti_landing_orbiter_seed_v1",
+            issue_type="orbiter_later_landing",
             accepted_questions=("Can an orbiter later land on the same planet?",),
             ruling="No. Once a probe becomes an orbiter, it remains an orbiter for the rest of the game and cannot later land on that planet.",
             primary_rule_id="rule_seti_orbiter_is_permanent",
@@ -874,6 +1116,7 @@ def _build_case_specs() -> tuple[_PilotCaseSpec, ...]:
         _PilotCaseSpec(
             question_id="seti-rules-002-opponent-orbiter-discount",
             seed_id="seti_landing_orbiter_seed_v1",
+            issue_type="opponent_orbiter_discount",
             accepted_questions=("Does an opponent's orbiter still reduce my landing cost?",),
             ruling="Yes. The base landing discount applies whenever an orbiter is present, and FAQ Q6 clarifies that the orbiter's owner does not matter.",
             primary_rule_id="rule_seti_landing_discount_if_orbiter_present",
@@ -898,6 +1141,7 @@ def _build_case_specs() -> tuple[_PilotCaseSpec, ...]:
         _PilotCaseSpec(
             question_id="seti-rules-003-moon-discount",
             seed_id="seti_landing_orbiter_seed_v1",
+            issue_type="moon_discount_extension",
             accepted_questions=("Does an existing orbiter also reduce the cost to land on that planet's moon?",),
             ruling="Yes, if you are otherwise allowed to land on that moon. FAQ Q7 says moon landings inherit the planet's orbiter discount, while the core landing rule still requires a separate effect or tech to access moons.",
             primary_rule_id="rule_seti_moon_landing_inherits_planet_discount_logic",
@@ -924,6 +1168,7 @@ def _build_case_specs() -> tuple[_PilotCaseSpec, ...]:
         _PilotCaseSpec(
             question_id="seti-rules-004-opponent-orbiter-moon-discount",
             seed_id="seti_landing_orbiter_seed_v1",
+            issue_type="opponent_orbiter_moon_discount",
             accepted_questions=(
                 "If another player's orbiter is at Jupiter and I have the tech that lets me land on moons, do I get the discount when landing on one of Jupiter's moons?",
             ),
@@ -962,6 +1207,7 @@ def _build_case_specs() -> tuple[_PilotCaseSpec, ...]:
         _PilotCaseSpec(
             question_id="seti-rules-012-free-action-timing",
             seed_id="seti_free_action_authority_seed_v1",
+            issue_type="general_free_action_timing",
             accepted_questions=(
                 "Can I interrupt a main action with a free action, and can I interrupt one free action with another free action?",
             ),
@@ -991,6 +1237,7 @@ def _build_case_specs() -> tuple[_PilotCaseSpec, ...]:
         _PilotCaseSpec(
             question_id="seti-rules-021-scan-interrupt-publicity",
             seed_id="seti_free_action_authority_seed_v1",
+            issue_type="scan_interrupt_timing",
             accepted_questions=(
                 "During a Scan action, can I interrupt the Scan with a free action and then continue the Scan?",
             ),
@@ -1017,6 +1264,7 @@ def _build_case_specs() -> tuple[_PilotCaseSpec, ...]:
         _PilotCaseSpec(
             question_id="seti-rules-022-free-action-income-nesting",
             seed_id="seti_free_action_authority_seed_v1",
+            issue_type="triggered_income_free_action_nesting",
             accepted_questions=(
                 "If placing data triggers the income increase effect, can I place more data first and then resolve that income effect?",
             ),
@@ -1043,6 +1291,7 @@ def _build_case_specs() -> tuple[_PilotCaseSpec, ...]:
         _PilotCaseSpec(
             question_id="seti-rules-028-player-aid-free-action-summary-conflict",
             seed_id="seti_free_action_authority_seed_v1",
+            issue_type="player_aid_timing_conflict",
             accepted_questions=(
                 'The player aid says free actions are "NO LIMIT". Does that allow one free action to interrupt another?',
             ),

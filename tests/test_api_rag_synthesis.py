@@ -1,7 +1,6 @@
-"""Tests for the feature-flagged DSPy synthesis API path."""
+"""Tests for the OpenAI-compatible rules-lawyer API surface."""
 
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 
@@ -21,59 +20,6 @@ from vgm.rules import (
     RuleReference,
     RulesRulingResult,
 )
-from vgm.rag import RagContext, RagSynthesisResult
-
-
-class FakeAgent:
-    """Minimal fallback agent stub."""
-
-    def __init__(self, output="fallback answer"):
-        self.output = output
-        self.calls = []
-        self.pending_proposals = {}
-
-    def run(self, prompt, session_id=None):
-        self.calls.append({"prompt": prompt, "session_id": session_id})
-        return SimpleNamespace(output=self.output)
-
-
-class FakeRagContextBuilder:
-    """Return a fixed context and record calls."""
-
-    def __init__(self, context: RagContext):
-        self.context = context
-        self.calls = []
-
-    def build_from_messages(self, messages, session_id):
-        self.calls.append({"messages": messages, "session_id": session_id})
-        return self.context
-
-
-class FakeRagSynthesizer:
-    """Return a fixed synthesis result or raise a configured error."""
-
-    def __init__(self, result=None, error=None):
-        self.result = result
-        self.error = error
-        self.calls = []
-
-    def synthesize(self, context):
-        self.calls.append(context)
-        if self.error:
-            raise self.error
-        return self.result
-
-
-class FakeCompileManager:
-    """Track whether the API tries to queue background compilation."""
-
-    def __init__(self, should_begin=True):
-        self.should_begin = should_begin
-        self.begin_calls = 0
-
-    def begin_auto_compile(self):
-        self.begin_calls += 1
-        return self.should_begin
 
 
 class FakeRulesRulingEngine:
@@ -91,18 +37,6 @@ class FakeRulesRulingEngine:
     def inspect_request(self, request):
         self.inspect_calls.append(request)
         return build_live_ruling_inspection(request.question)
-
-
-def build_rag_context() -> RagContext:
-    """Create a fixed context for API routing tests."""
-    return RagContext(
-        session_id="api-session",
-        project_id="project-1",
-        use_case_description="Track conversational memory",
-        current_question="What do you remember about Acme?",
-        retrieval_query="What do you remember about Acme?",
-    )
-
 
 def build_rules_ruling_result() -> RulesRulingResult:
     """Create a fixed ruling result for OpenAI-model routing tests."""
@@ -185,6 +119,7 @@ def build_live_ruling_inspection(question: str) -> LivePilotRulingInspection:
         selected_case=PilotCaseMatch(
             question_id="seti-rules-002-opponent-orbiter-discount",
             seed_id="seti_landing_orbiter_seed_v1",
+            issue_type="opponent_orbiter_discount",
             question_score=0.94,
             evidence_score=3,
             total_score=3.94,
@@ -194,6 +129,7 @@ def build_live_ruling_inspection(question: str) -> LivePilotRulingInspection:
             PilotCaseMatch(
                 question_id="seti-rules-002-opponent-orbiter-discount",
                 seed_id="seti_landing_orbiter_seed_v1",
+                issue_type="opponent_orbiter_discount",
                 question_score=0.94,
                 evidence_score=3,
                 total_score=3.94,
@@ -203,95 +139,9 @@ def build_live_ruling_inspection(question: str) -> LivePilotRulingInspection:
     )
 
 
-def test_chat_completions_uses_dspy_synthesizer_when_enabled(monkeypatch):
-    test_state = server.AppState()
-    test_state.agent = FakeAgent(output="should not be used")
-    test_state.rag_context_builder = FakeRagContextBuilder(build_rag_context())
-    test_state.rag_context_enabled = True
-    test_state.rag_synthesis_enabled = True
-    test_state.rag_synthesizer = FakeRagSynthesizer(
-        result=RagSynthesisResult(
-            answer="This answer came from DSPy.",
-            cited_source_ids=["node-1"],
-            abstain=False,
-            backend="dspy-baseline",
-        )
-    )
-    monkeypatch.setattr(server, "state", test_state)
-
-    request = server.ChatCompletionRequest(
-        model="vector-graph-memory",
-        messages=[server.ChatMessage(role="user", content="What do you remember about Acme?")],
-        user="api-session",
-    )
-
-    response = asyncio.run(server.chat_completions(request))
-
-    assert response.choices[0].message.content == "This answer came from DSPy."
-    assert test_state.agent.calls == []
-    assert len(test_state.rag_synthesizer.calls) == 1
-
-
-def test_chat_completions_falls_back_to_memory_agent_on_synthesis_error(monkeypatch):
-    test_state = server.AppState()
-    test_state.agent = FakeAgent(output="Fallback from MemoryAgent.")
-    test_state.rag_context_builder = FakeRagContextBuilder(build_rag_context())
-    test_state.rag_context_enabled = True
-    test_state.rag_synthesis_enabled = True
-    test_state.rag_synthesizer = FakeRagSynthesizer(error=RuntimeError("DSPy failure"))
-    monkeypatch.setattr(server, "state", test_state)
-
-    request = server.ChatCompletionRequest(
-        model="vector-graph-memory",
-        messages=[server.ChatMessage(role="user", content="What do you remember about Acme?")],
-        user="api-session",
-    )
-
-    response = asyncio.run(server.chat_completions(request))
-
-    assert response.choices[0].message.content == "Fallback from MemoryAgent."
-    assert len(test_state.agent.calls) == 1
-    assert len(test_state.rag_synthesizer.calls) == 1
-
-
-def test_chat_completions_queues_background_compile_once(monkeypatch):
-    test_state = server.AppState()
-    test_state.agent = FakeAgent(output="should not be used")
-    test_state.rag_context_builder = FakeRagContextBuilder(build_rag_context())
-    test_state.rag_context_enabled = True
-    test_state.rag_synthesis_enabled = True
-    test_state.rag_synthesizer = FakeRagSynthesizer(
-        result=RagSynthesisResult(
-            answer="DSPy answer while compile runs in the background.",
-            cited_source_ids=["node-1"],
-            abstain=False,
-            backend="dspy-baseline",
-        )
-    )
-    test_state.rag_compile_manager = FakeCompileManager(should_begin=True)
-    monkeypatch.setattr(server, "state", test_state)
-
-    scheduled = {}
-
-    def fake_create_task(coro):
-        scheduled["started"] = True
-        coro.close()
-        return "task-sentinel"
-
-    monkeypatch.setattr(server.asyncio, "create_task", fake_create_task)
-
-    request = server.ChatCompletionRequest(
-        model="vector-graph-memory",
-        messages=[server.ChatMessage(role="user", content="What do you remember about Acme?")],
-        user="api-session",
-    )
-
-    response = asyncio.run(server.chat_completions(request))
-
-    assert response.choices[0].message.content == "DSPy answer while compile runs in the background."
-    assert test_state.rag_compile_manager.begin_calls == 1
-    assert scheduled["started"] is True
-    assert test_state.rag_compile_task == "task-sentinel"
+@pytest.fixture(autouse=True)
+def isolate_request_trace_log(monkeypatch, tmp_path):
+    monkeypatch.setenv("API_TRACE_LOG_PATH", str(tmp_path / "api_traces"))
 
 
 def test_chat_completions_routes_rules_model_to_ruling_engine(monkeypatch):
@@ -314,7 +164,7 @@ def test_chat_completions_routes_rules_model_to_ruling_engine(monkeypatch):
     response = asyncio.run(server.chat_completions(request))
 
     assert len(test_state.rules_ruling_engine.calls) == 1
-    assert test_state.rules_ruling_engine.inspect_calls == []
+    assert len(test_state.rules_ruling_engine.inspect_calls) == 1
     assert test_state.rules_ruling_engine.calls[0].question == request.messages[-1].content
     assert "Primary authority: Core Rulebook, Land on Planet or Moon (p. 12)" in response.choices[0].message.content
     assert "Modifiers:" in response.choices[0].message.content
@@ -322,11 +172,28 @@ def test_chat_completions_routes_rules_model_to_ruling_engine(monkeypatch):
     assert response.model == server.RULES_CHAT_MODEL_ID
 
 
-def test_chat_completions_rejects_unknown_model(monkeypatch):
-    test_state = server.AppState()
-    test_state.agent = FakeAgent()
-    monkeypatch.setattr(server, "state", test_state)
+def test_list_models_only_exposes_rules_model():
+    response = asyncio.run(server.list_models())
 
+    assert [model.id for model in response.data] == [server.RULES_CHAT_MODEL_ID]
+
+
+def test_chat_completions_rejects_disabled_memory_model():
+    request = server.ChatCompletionRequest(
+        model=server.MEMORY_CHAT_MODEL_ID,
+        messages=[server.ChatMessage(role="user", content="Hello")],
+        user="api-session",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(server.chat_completions(request))
+
+    assert exc_info.value.status_code == 400
+    assert "temporarily disabled" in exc_info.value.detail
+    assert server.RULES_CHAT_MODEL_ID in exc_info.value.detail
+
+
+def test_chat_completions_rejects_unknown_model(monkeypatch):
     request = server.ChatCompletionRequest(
         model="not-a-real-model",
         messages=[server.ChatMessage(role="user", content="Hello")],
@@ -337,7 +204,6 @@ def test_chat_completions_rejects_unknown_model(monkeypatch):
         asyncio.run(server.chat_completions(request))
 
     assert exc_info.value.status_code == 400
-    assert server.MEMORY_CHAT_MODEL_ID in exc_info.value.detail
     assert server.RULES_CHAT_MODEL_ID in exc_info.value.detail
 
 
@@ -375,7 +241,11 @@ def test_chat_completions_streams_rules_model_as_sse(monkeypatch):
     assert '"role": "assistant"' in body
     assert "<think>" in body
     assert "Trace summary:" in body
+    assert "Log file:" in body
+    assert "Route: seti-rules-lawyer -> live pilot ruling" in body
     assert "Matched case: seti-rules-002-opponent-orbiter-discount" in body
+    assert "Top candidates:" in body
+    assert "Retrieval:" in body
     assert "Primary authority: Core Rulebook, Land on Planet or Moon (p. 12)" in body
     assert '"finish_reason": "stop"' in body
     assert "data: [DONE]" in body

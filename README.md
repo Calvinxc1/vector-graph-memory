@@ -258,6 +258,16 @@ For local host-run utilities such as `scripts/import_manual_seed.py` and
 
 These defaults are intended to match the Docker Compose host port exposure.
 
+Before rule bundles are materialized or imported, the loader now runs a generic
+rule-load audit. The audit checks source coverage, direct source-to-rule
+grounding, edge integrity, schema completeness, and authority metadata. You can
+run it directly with:
+
+```bash
+uv run python scripts/audit_rule_load.py \
+  --manifest tests/fixtures/rag_eval/seti_landing_orbiter_seed_v1_manifest.json
+```
+
 For the live pilot ruling path, the main local utility scripts are:
 
 - `uv run python scripts/run_pilot_ruling.py --question '...'`
@@ -272,8 +282,22 @@ If you want to use an external Open WebUI instance, configure:
 
 - base URL: `http://localhost:8052/vgm-api/v1`
 - API key: any value for the current default local setup
-- model: `vector-graph-memory` for the memory-oriented chat path
 - model: `seti-rules-lawyer` for the live `SETI` pilot ruling path through Open WebUI
+
+The legacy `vector-graph-memory` chat model is currently disabled at the
+OpenAI-compatible API surface so Open WebUI cannot accidentally route into the
+memory-oriented interface during rules-lawyer testing.
+
+When Open WebUI uses streaming chat, the exposed rules model prepends a collapsible
+Thinking trace that summarizes routing, evidence, and fallback behavior. Each
+trace also includes the request trace log path from `API_TRACE_LOG_PATH`
+(default: `./logs/api`) for deeper per-request JSON diagnostics under
+`requests/<date>/<request-id>.json`.
+
+The default Compose stack also disables Open WebUI follow-up prompt generation
+at startup and sets `ENABLE_PERSISTENT_CONFIG=false` so that this interface
+default is enforced from Compose on each restart rather than drifting via
+persisted UI state.
 
 If Open WebUI is on the same Docker network and you want to bypass the proxy, use `http://api:8000/v1` instead.
 

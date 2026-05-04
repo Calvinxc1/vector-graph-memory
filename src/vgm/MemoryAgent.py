@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models import Model
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from qdrant_client import QdrantClient
 from gremlin_python.driver import client as gremlin_client
 from pydantic_ai import EmbeddingModel
@@ -22,6 +22,27 @@ class AgentDependencies(BaseModel):
     memory_agent: Any  # Reference to MemoryAgent instance
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class MemoryToolCallTrace(BaseModel):
+    """Typed summary of one memory tool invocation."""
+
+    tool_name: str
+    arguments: Dict[str, Any]
+    result_summary: str
+    status: Literal["ok", "error"] = "ok"
+
+
+class MemoryRunTrace(BaseModel):
+    """Typed summary of one MemoryAgent run."""
+
+    session_id: str
+    message_count: int
+    trigger_mode: Literal["phrase", "interval", "ai_determined"]
+    memory_check_triggered: bool
+    enhanced_prompt_injected: bool
+    tool_calls: List[MemoryToolCallTrace] = Field(default_factory=list)
+    final_output_preview: str = ""
 
 
 class MemoryAgent:
@@ -82,6 +103,8 @@ class MemoryAgent:
 
         # Pending memory proposals (for user confirmation)
         self.pending_proposals: Dict[str, Dict[str, Any]] = {}
+        self._active_trace: Optional[MemoryRunTrace] = None
+        self._last_trace: Optional[MemoryRunTrace] = None
 
         # Build system prompt with memory instructions
         full_system_prompt = self._build_system_prompt(system_prompt)
@@ -162,6 +185,11 @@ When asked about your capabilities or "what tools" you have, explain these memor
             )
 
             if not results:
+                ctx.deps.memory_agent._record_tool_call(
+                    tool_name="search_memory",
+                    arguments={"query": query, "limit": limit},
+                    result_summary="No similar memory entries found.",
+                )
                 return f"No similar content found in memory for: '{query}'"
 
             formatted = []
@@ -171,6 +199,11 @@ When asked about your capabilities or "what tools" you have, explain these memor
                     f"(similarity: {result.similarity_score:.2f})"
                 )
 
+            ctx.deps.memory_agent._record_tool_call(
+                tool_name="search_memory",
+                arguments={"query": query, "limit": limit},
+                result_summary=f"Returned {len(results)} similar memory entr{'y' if len(results) == 1 else 'ies'}.",
+            )
             return "\n".join(formatted)
 
         @self.agent.tool
@@ -224,6 +257,18 @@ When asked about your capabilities or "what tools" you have, explain these memor
                     f"Should I add '{content[:100]}...' as a {entity_type} to memory?"
                 )
 
+            agent_instance._record_tool_call(
+                tool_name="propose_memory_addition",
+                arguments={
+                    "content": content,
+                    "entity_type": entity_type,
+                    "relationship_count": len(relationships or []),
+                },
+                result_summary=(
+                    f"Created proposal {proposal_id} with {len(similar)} similar "
+                    f"entr{'y' if len(similar) == 1 else 'ies'} detected."
+                ),
+            )
             return proposal
 
         @self.agent.tool
@@ -249,6 +294,14 @@ When asked about your capabilities or "what tools" you have, explain these memor
                 )
 
                 if not results:
+                    ctx.deps.memory_agent._record_tool_call(
+                        tool_name="get_memory_context",
+                        arguments={
+                            "node_id": node_id,
+                            "traversal_steps": traversal_steps,
+                        },
+                        result_summary="No connected nodes found.",
+                    )
                     return f"No connected nodes found for {node_id}"
 
                 formatted = []
@@ -260,9 +313,58 @@ When asked about your capabilities or "what tools" you have, explain these memor
                     else:
                         formatted.append(f"{i}. {node}")
 
+                ctx.deps.memory_agent._record_tool_call(
+                    tool_name="get_memory_context",
+                    arguments={
+                        "node_id": node_id,
+                        "traversal_steps": traversal_steps,
+                    },
+                    result_summary=f"Returned {len(results)} connected result entr{'y' if len(results) == 1 else 'ies'}.",
+                )
                 return "\n".join(formatted)
             except Exception as e:
+                ctx.deps.memory_agent._record_tool_call(
+                    tool_name="get_memory_context",
+                    arguments={
+                        "node_id": node_id,
+                        "traversal_steps": traversal_steps,
+                    },
+                    result_summary=str(e),
+                    status="error",
+                )
                 return f"Error traversing from node {node_id}: {str(e)}"
+
+    @staticmethod
+    def _truncate_text(value: Any, limit: int = 120) -> Any:
+        """Trim long values before storing them in request-scoped traces."""
+        if isinstance(value, str):
+            if len(value) <= limit:
+                return value
+            return value[: limit - 3] + "..."
+        return value
+
+    def _record_tool_call(
+        self,
+        *,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        result_summary: str,
+        status: Literal["ok", "error"] = "ok",
+    ) -> None:
+        """Append one typed tool-call trace entry for the current run."""
+        if self._active_trace is None:
+            return
+        self._active_trace.tool_calls.append(
+            MemoryToolCallTrace(
+                tool_name=tool_name,
+                arguments={
+                    key: self._truncate_text(value)
+                    for key, value in arguments.items()
+                },
+                result_summary=self._truncate_text(result_summary, limit=180),
+                status=status,
+            )
+        )
 
     def configure_memory(
         self,
@@ -446,6 +548,14 @@ When asked about your capabilities or "what tools" you have, explain these memor
         # Check if we should trigger memory review
         should_check_memory = self._should_check_memory(prompt)
 
+        self._active_trace = MemoryRunTrace(
+            session_id=self._current_session_id or "unknown",
+            message_count=self._message_count,
+            trigger_mode=self.trigger_config.mode,
+            memory_check_triggered=should_check_memory,
+            enhanced_prompt_injected=should_check_memory,
+        )
+
         # Optionally inject memory check instruction
         if should_check_memory:
             enhanced_prompt = f"{prompt}\n\n[Assistant instruction: Review this conversation for items worth adding to memory based on the configured memory threshold. Use the memory tools to propose additions if appropriate.]"
@@ -456,9 +566,23 @@ When asked about your capabilities or "what tools" you have, explain these memor
         deps = AgentDependencies(memory_agent=self)
 
         # Run agent (synchronous for v1)
-        result = _run_async(self.agent.run(enhanced_prompt, deps=deps))
+        try:
+            result = _run_async(self.agent.run(enhanced_prompt, deps=deps))
+            if self._active_trace is not None:
+                self._active_trace.final_output_preview = self._truncate_text(
+                    getattr(result, "output", ""),
+                    limit=180,
+                )
+                self._last_trace = self._active_trace.model_copy(deep=True)
+            return result
+        finally:
+            self._active_trace = None
 
-        return result
+    def get_last_trace(self) -> Optional[MemoryRunTrace]:
+        """Return the most recent request-scoped memory trace."""
+        if self._last_trace is None:
+            return None
+        return self._last_trace.model_copy(deep=True)
 
     def _should_check_memory(self, prompt: str) -> bool:
         """Determine if we should check for memory items.
