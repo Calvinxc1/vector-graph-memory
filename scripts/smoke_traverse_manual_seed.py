@@ -20,10 +20,10 @@ from uuid import NAMESPACE_URL, uuid5
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from gremlin_python.driver import client as gremlin_client  # type: ignore[import-untyped]
-from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
 from qdrant_client import QdrantClient
 
 from vgm.VectorGraphStore import VectorGraphStore
+from vgm.model_provider import build_embedding_model_from_env
 
 
 SEED_ID = "seti_landing_orbiter_seed_v1"
@@ -63,7 +63,7 @@ def main() -> int:
     janus = gremlin_client.Client(
         f"ws://{janusgraph_host}:{janusgraph_port}/gremlin", "g"
     )
-    embedding_model = OpenAIEmbeddingModel(os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
+    embedding_model = build_embedding_model_from_env()
     store = VectorGraphStore(
         qdrant_client=qdrant,
         janus_client=janus,

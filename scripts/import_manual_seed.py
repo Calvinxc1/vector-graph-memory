@@ -31,10 +31,10 @@ from uuid import NAMESPACE_URL, uuid5
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from gremlin_python.driver import client as gremlin_client  # type: ignore[import-untyped]
-from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
 from qdrant_client import QdrantClient
 
 from vgm.VectorGraphStore import VectorGraphStore
+from vgm.model_provider import build_embedding_model_from_env, embedding_model_name_from_env
 from vgm.rules import audit_rule_extraction_bundle, load_bundle_from_seed_records
 from vgm.schemas import EdgeMetadata, NodeMetadata
 
@@ -213,7 +213,7 @@ def main() -> int:
     qdrant_port = int(os.getenv("QDRANT_HTTP_PORT", "8111"))
     janusgraph_host = os.getenv("JANUSGRAPH_HOST", "localhost")
     janusgraph_port = int(os.getenv("JANUSGRAPH_PORT", "8182"))
-    embedding_model_name = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+    embedding_model_name = embedding_model_name_from_env()
 
     if args.dry_run:
         print(f"Dry run for seed: {manifest['seed_id']}")
@@ -233,7 +233,7 @@ def main() -> int:
     janus = gremlin_client.Client(
         f"ws://{janusgraph_host}:{janusgraph_port}/gremlin", "g"
     )
-    embedding_model = OpenAIEmbeddingModel(embedding_model_name)
+    embedding_model = build_embedding_model_from_env(embedding_model_name)
     store = VectorGraphStore(
         qdrant_client=qdrant,
         janus_client=janus,

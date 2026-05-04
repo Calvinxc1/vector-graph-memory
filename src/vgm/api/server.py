@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import logging
+import re
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional, Literal, cast
@@ -16,12 +17,17 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 from gremlin_python.driver import client as gremlin_client  # type: ignore[import-untyped]
-from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
 from dotenv import load_dotenv
 
 from .. import __version__ as PACKAGE_VERSION
 from ..MemoryAgent import MemoryAgent, MemoryRunTrace
 from ..config import MemoryConfig, MemoryTriggerConfig, AuditConfig
+from ..model_provider import (
+    build_chat_model_from_env,
+    build_embedding_model_from_env,
+    chat_model_name_from_env,
+    embedding_model_name_from_env,
+)
 from ..rag import (
     DEFAULT_EVAL_SOURCE_DIR,
     DEFAULT_EVAL_SUITE_PATH,
@@ -161,6 +167,7 @@ MEMORY_CHAT_MODEL_ID = "vector-graph-memory"
 RULES_CHAT_MODEL_ID = "seti-rules-lawyer"
 DEFAULT_API_TRACE_LOG_PATH = "./logs/api"
 RULES_CASE_SELECTION_THRESHOLD = 0.14
+_THINKING_BLOCK_PATTERN = re.compile(r"<think>(.*?)</think>", re.IGNORECASE | re.DOTALL)
 
 
 _TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
@@ -440,8 +447,10 @@ async def lifespan(_app: FastAPI):
     print(f"  ✓ Connected to JanusGraph at {janusgraph_host}:{janusgraph_port}")
 
     # Initialize memory agent
-    embedding_model = OpenAIEmbeddingModel("text-embedding-3-small")
-    llm_model = os.getenv("LLM_MODEL", "openai:gpt-4o-mini")
+    llm_model = chat_model_name_from_env()
+    chat_model = build_chat_model_from_env(llm_model)
+    embedding_model_name = embedding_model_name_from_env()
+    embedding_model = build_embedding_model_from_env(embedding_model_name)
 
     memory_config = MemoryConfig(
         use_case_description=os.getenv(
@@ -495,7 +504,7 @@ async def lifespan(_app: FastAPI):
         qdrant_client=state.qdrant,
         janus_client=state.janus,
         embedding_model=embedding_model,
-        llm_model=llm_model,
+        llm_model=chat_model,
         system_prompt=system_prompt,
         memory_config=memory_config,
         trigger_config=trigger_config,
@@ -615,6 +624,7 @@ async def lifespan(_app: FastAPI):
 
     print("  ✓ Memory Agent initialized")
     print(f"    - Model: {llm_model}")
+    print(f"    - Embeddings: {embedding_model_name}")
     print(f"    - Project: {memory_config.project_id}")
     print(f"    - Trigger: {trigger_config.mode}")
     print(f"    - RAG context seam enabled: {state.rag_context_enabled}")
@@ -1076,6 +1086,46 @@ def _split_stream_sections(assistant_response: str) -> list[str]:
     return streamed_sections
 
 
+def _extract_model_thinking(assistant_response: str) -> tuple[str, list[str]]:
+    """Remove complete model-supplied thinking blocks from visible response text."""
+
+    thinking_blocks = [
+        match.group(1).strip()
+        for match in _THINKING_BLOCK_PATTERN.finditer(assistant_response)
+        if match.group(1).strip()
+    ]
+    if not thinking_blocks:
+        return assistant_response, []
+
+    visible_response = _THINKING_BLOCK_PATTERN.sub("", assistant_response).strip()
+    return visible_response, thinking_blocks
+
+
+def _append_model_thinking_to_trace(
+    trace_summary: str | None,
+    thinking_blocks: list[str],
+) -> str | None:
+    """Append model-supplied thinking below diagnostic trace details."""
+
+    if not thinking_blocks:
+        return trace_summary
+
+    model_thinking = "\n\nModel thinking:\n" + "\n\n".join(thinking_blocks)
+    if trace_summary is None:
+        return f"<think>{model_thinking}\n</think>"
+
+    closing_tag_match = re.search(r"</think>\s*$", trace_summary, flags=re.IGNORECASE)
+    if closing_tag_match is None:
+        return f"{trace_summary}{model_thinking}"
+
+    return (
+        trace_summary[: closing_tag_match.start()]
+        + model_thinking
+        + "\n"
+        + trace_summary[closing_tag_match.start() :]
+    )
+
+
 def _build_streaming_chat_response(
     *,
     model: str,
@@ -1085,6 +1135,8 @@ def _build_streaming_chat_response(
 ) -> StreamingResponse:
     response_id = f"chatcmpl-{session_id}-{int(datetime.now().timestamp())}"
     created = int(datetime.now().timestamp())
+    assistant_response, thinking_blocks = _extract_model_thinking(assistant_response)
+    trace_summary = _append_model_thinking_to_trace(trace_summary, thinking_blocks)
     sections = []
     if trace_summary:
         sections.append(trace_summary)

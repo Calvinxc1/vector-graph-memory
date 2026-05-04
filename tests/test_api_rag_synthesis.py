@@ -249,3 +249,22 @@ def test_chat_completions_streams_rules_model_as_sse(monkeypatch):
     assert "Primary authority: Core Rulebook, Land on Planet or Moon (p. 12)" in body
     assert '"finish_reason": "stop"' in body
     assert "data: [DONE]" in body
+
+
+def test_streaming_response_moves_model_thinking_under_trace_summary():
+    response = server._build_streaming_chat_response(
+        model=server.RULES_CHAT_MODEL_ID,
+        session_id="thinking-session",
+        trace_summary="<think>\nTrace summary:\n- Route: test\n</think>",
+        assistant_response="<think>Internal model chain.</think>\n\nVisible answer.",
+    )
+
+    body = asyncio.run(_collect_streaming_response_body(response))
+
+    assert "Trace summary:" in body
+    assert "Model thinking:" in body
+    assert "Internal model chain." in body
+    assert "Visible answer." in body
+    assert body.index("Trace summary:") < body.index("Model thinking:")
+    assert body.index("Model thinking:") < body.index("Visible answer.")
+    assert "<think>Internal model chain.</think>" not in body

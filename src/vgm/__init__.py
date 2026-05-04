@@ -4,6 +4,12 @@ __version__ = "0.1.0"
 
 # Main agent
 from .MemoryAgent import MemoryAgent
+from .model_provider import (
+    build_chat_model_from_env,
+    build_embedding_model_from_env,
+    chat_model_name_from_env,
+    embedding_model_name_from_env,
+)
 
 # Storage layer
 from .VectorGraphStore import VectorGraphStore
@@ -137,6 +143,10 @@ __all__ = [
     # Main API
     "MemoryAgent",
     "VectorGraphStore",
+    "build_chat_model_from_env",
+    "build_embedding_model_from_env",
+    "chat_model_name_from_env",
+    "embedding_model_name_from_env",
     "ConversationTurn",
     "DEFAULT_DSPY_RUN_LOG_DIR",
     "DEFAULT_EVAL_SOURCE_DIR",

@@ -33,7 +33,7 @@ Run the default stack with Docker Compose:
 ```bash
 # 1. Configure environment
 cp .env.example .env
-# Edit .env and set OPENAI_API_KEY
+# Edit .env for either OpenAI or external Ollama provider settings
 
 # 2. Start all services
 docker compose up -d
@@ -74,14 +74,24 @@ docker compose up -d qdrant janusgraph
 # 4. Initialize JanusGraph schema once
 uv run python scripts/init_janusgraph_schema.py
 
-# 5. Export OPENAI_API_KEY in your shell
+# 5. Export provider settings in your shell
 export OPENAI_API_KEY=sk-...
 
 # 6. Start API locally
 ./start_api.sh
 ```
 
-Note: `start_api.sh` currently checks `OPENAI_API_KEY` from the shell environment and does not source `.env`.
+For an external Ollama service, export the provider and endpoint instead:
+
+```bash
+export LLM_PROVIDER=ollama
+export EMBEDDING_PROVIDER=ollama
+export OLLAMA_BASE_URL=https://ollama.example.com/v1
+export OLLAMA_CHAT_MODEL=llama3.1:8b
+export OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+```
+
+Note: `start_api.sh` checks exported shell variables and does not source `.env`.
 
 ## Open WebUI Integration
 
@@ -136,6 +146,7 @@ Standard OpenAI chat completions endpoint. The selected `model` determines which
 For `seti-rules-lawyer`, `stream: true` returns OpenAI-style SSE chunks for Open WebUI compatibility. The streamed output begins with a concise `<think>...</think>` diagnostic summary before the visible answer text:
 
 - `seti-rules-lawyer` shows route, seed origin, premise-screen results for invalid scenarios, inferred question issue, retrieval counts, top candidate cases, authority selection, fit-gate rationale, abstain details, and the per-request trace file path for deeper inspection.
+- If a downstream model response includes complete `<think>...</think>` blocks, the API removes those blocks from the visible answer and appends them under `Model thinking:` below the diagnostic trace inside the same Thinking section.
 
 The ruling or answer is still computed before streaming begins, so this improves inspection UX rather than first-token latency. Detailed per-request traces are written under `API_TRACE_LOG_PATH` (default: `./logs/api`) as one JSON file per request, partitioned by date, for example `./logs/api/requests/2026-05-01/<request-id>.json`.
 
@@ -245,7 +256,14 @@ Key settings:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `LLM_PROVIDER` | Runtime chat/model provider: `openai` or external OpenAI-compatible `ollama` | `openai` |
 | `LLM_MODEL` | PydanticAI model string | `openai:gpt-4o-mini` |
+| `EMBEDDING_PROVIDER` | Embedding provider. If unset, follows `LLM_PROVIDER` | unset |
+| `EMBEDDING_MODEL` | Embedding model for OpenAI-backed embeddings | `text-embedding-3-small` |
+| `OLLAMA_BASE_URL` | External Ollama OpenAI-compatible `/v1` base URL | unset |
+| `OLLAMA_CHAT_MODEL` | External Ollama chat model used when `LLM_PROVIDER=ollama` | `llama3.1:8b` |
+| `OLLAMA_EMBEDDING_MODEL` | External Ollama embedding model used when `EMBEDDING_PROVIDER=ollama` | `nomic-embed-text` |
+| `OLLAMA_API_KEY` | Optional API key for the external Ollama domain | unset |
 | `PROJECT_ID` | Memory namespace | `default` |
 | `MEMORY_USE_CASE` | Use case description | `General purpose memory` |
 | `TRIGGER_MODE` | When to check memory | `ai_determined` |
@@ -305,7 +323,7 @@ The API server currently:
 ## Known Gaps
 
 - MongoDB audit logging is intended but not fully wired into API startup configuration.
-- `start_api.sh` requires `OPENAI_API_KEY` to be exported in the current shell and does not source `.env`.
+- `start_api.sh` checks exported provider variables in the current shell and does not source `.env`.
 - JanusGraph schema initialization is manual for local library and local API development.
 - Session-scoped audit history does not currently apply the documented `limit` parameter.
 - The `seti-rules-lawyer` chat model currently renders the pilot ruling into plain chat text rather than returning the full typed ruling contract.

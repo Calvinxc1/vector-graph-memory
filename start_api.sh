@@ -38,12 +38,26 @@ if ! timeout 2 bash -c "echo > /dev/tcp/$JANUSGRAPH_HOST/$JANUSGRAPH_PORT" 2>/de
 fi
 echo "✓ JanusGraph is running"
 
-# Check if OPENAI_API_KEY is set
-if [ -z "$OPENAI_API_KEY" ]; then
-    echo "❌ OPENAI_API_KEY not set in .env file"
-    exit 1
+# Check provider credentials. This script reads exported shell variables; it
+# does not parse .env because the example file contains unquoted values.
+LLM_PROVIDER=${LLM_PROVIDER:-openai}
+EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-$LLM_PROVIDER}
+
+if [ "$LLM_PROVIDER" = "ollama" ] || [ "$EMBEDDING_PROVIDER" = "ollama" ]; then
+    if [ -z "$OLLAMA_BASE_URL" ] && [ -z "$OLLAMA_CHAT_BASE_URL" ] && [ -z "$OLLAMA_EMBEDDING_BASE_URL" ]; then
+        echo "❌ OLLAMA_BASE_URL must be exported for the external Ollama provider"
+        exit 1
+    fi
+    echo "✓ External Ollama provider configured"
 fi
-echo "✓ OpenAI API key configured"
+
+if [ "$LLM_PROVIDER" = "openai" ] || [ "$EMBEDDING_PROVIDER" = "openai" ]; then
+    if [ -z "$OPENAI_API_KEY" ]; then
+        echo "❌ OPENAI_API_KEY must be exported for OpenAI-backed chat or embeddings"
+        exit 1
+    fi
+    echo "✓ OpenAI API key configured"
+fi
 
 # Start the API server
 echo ""

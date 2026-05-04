@@ -130,7 +130,7 @@ What works today:
 What is incomplete or only partially implemented:
 
 - MongoDB audit logging is intended, but API startup does not yet wire MongoDB audit configuration end to end.
-- Local API startup via `./start_api.sh` requires `OPENAI_API_KEY` to already be exported in the shell and does not source `.env`.
+- Local API startup via `./start_api.sh` checks exported provider variables in the shell and does not source `.env`.
 - `ai_determined` trigger mode currently injects memory-review guidance on every turn rather than selectively deciding when to review.
 - `GET /memory/audit/{session_id}` accepts `limit`, but session-scoped audit queries do not currently enforce that limit.
 - JanusGraph schema initialization is still manual for local library and local API use outside the default Dockerized path.
@@ -163,7 +163,7 @@ This is the recommended path for trying the repository as it exists today.
 ```bash
 # 1. Configure environment
 cp .env.example .env
-# Edit .env and set OPENAI_API_KEY
+# Edit .env for either OpenAI or external Ollama provider settings
 
 # 2. Start the default stack
 docker compose up -d
@@ -229,14 +229,25 @@ docker compose up -d qdrant janusgraph
 # 4. Initialize JanusGraph schema once
 uv run python scripts/init_janusgraph_schema.py
 
-# 5. Export your API key in the current shell
+# 5. Export provider settings in the current shell
 export OPENAI_API_KEY=sk-...
 
 # 6. Start the API
 ./start_api.sh
 ```
 
-Important caveat: `start_api.sh` does not currently source `.env`.
+For an external Ollama service, export the provider and endpoint instead:
+
+```bash
+export LLM_PROVIDER=ollama
+export EMBEDDING_PROVIDER=ollama
+export OLLAMA_BASE_URL=https://ollama.example.com/v1
+export OLLAMA_CHAT_MODEL=llama3.1:8b
+export OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+```
+
+Important caveat: `start_api.sh` checks exported shell variables and does not
+source `.env`.
 
 ## Open WebUI Integration
 
@@ -292,7 +303,9 @@ When Open WebUI uses streaming chat, the exposed rules model prepends a collapsi
 Thinking trace that summarizes routing, evidence, and fallback behavior. Each
 trace also includes the request trace log path from `API_TRACE_LOG_PATH`
 (default: `./logs/api`) for deeper per-request JSON diagnostics under
-`requests/<date>/<request-id>.json`.
+`requests/<date>/<request-id>.json`. If a downstream model emits complete
+`<think>...</think>` blocks, the API appends them below the diagnostic details
+inside the same Thinking section and keeps them out of the visible answer text.
 
 The default Compose stack also disables Open WebUI follow-up prompt generation
 at startup and sets `ENABLE_PERSISTENT_CONFIG=false` so that this interface

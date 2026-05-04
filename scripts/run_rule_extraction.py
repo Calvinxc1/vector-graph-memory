@@ -16,6 +16,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from vgm.model_provider import build_chat_model_from_env, chat_model_name_from_env
 from vgm.rules import (
     PydanticAIRuleExtractionPredictor,
     RawPydanticAIRuleExtractionPredictor,
@@ -41,7 +42,10 @@ def _load_jsonl(path: Path) -> list[dict]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", required=True, help="PydanticAI model string to use")
+    parser.add_argument(
+        "--model",
+        help="PydanticAI model string to use. Defaults to configured LLM provider/model.",
+    )
     parser.add_argument(
         "--manifest",
         type=Path,
@@ -70,13 +74,15 @@ def main() -> int:
     reference_bundle = load_bundle_from_seed_records(manifest, node_records, edge_records)
     request = build_request_from_reference_bundle(reference_bundle)
 
-    predictor = PydanticAIRuleExtractionPredictor(model=args.model)
+    model_label = chat_model_name_from_env(args.model)
+    model = build_chat_model_from_env(model_label)
+    predictor = PydanticAIRuleExtractionPredictor(model=model)
     runner = RuleExtractionRunner(predictor=predictor)
     try:
         extracted_bundle = runner.extract(request)
     except Exception:
         if args.dump_raw_on_error:
-            raw_predictor = RawPydanticAIRuleExtractionPredictor(model=args.model)
+            raw_predictor = RawPydanticAIRuleExtractionPredictor(model=model)
             raw_output = raw_predictor(
                 runner.build_system_prompt(request),
                 runner.build_user_prompt(request),
@@ -96,7 +102,7 @@ def main() -> int:
     comparison = compare_rule_extractions(reference_bundle, extracted_bundle)
 
     print(f"Seed: {reference_bundle.seed_id}")
-    print(f"Model: {args.model}")
+    print(f"Model: {model_label}")
     print(f"Exact match: {comparison.is_exact_match}")
     print(f"Missing source passages: {comparison.missing_source_passage_ids}")
     print(f"Extra source passages: {comparison.extra_source_passage_ids}")

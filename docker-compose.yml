@@ -64,8 +64,20 @@ services:
       - JANUSGRAPH_PORT=8182
 
       # LLM Configuration
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - LLM_MODEL=${LLM_MODEL:-openai:gpt-4o-mini}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - EMBEDDING_API_BASE=${EMBEDDING_API_BASE:-}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      - OLLAMA_CHAT_BASE_URL=${OLLAMA_CHAT_BASE_URL:-}
+      - OLLAMA_EMBEDDING_BASE_URL=${OLLAMA_EMBEDDING_BASE_URL:-}
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
+      - OLLAMA_CHAT_MODEL=${OLLAMA_CHAT_MODEL:-}
+      - OLLAMA_EMBEDDING_MODEL=${OLLAMA_EMBEDDING_MODEL:-}
 
       # Memory Configuration
       - PROJECT_ID=${PROJECT_ID:-default}
@@ -75,8 +87,8 @@ services:
 
       # Trigger Configuration
       - TRIGGER_MODE=${TRIGGER_MODE:-ai_determined}
-      - TRIGGER_PHRASE=${TRIGGER_PHRASE}
-      - TRIGGER_INTERVAL=${TRIGGER_INTERVAL}
+      - TRIGGER_PHRASE=${TRIGGER_PHRASE:-}
+      - TRIGGER_INTERVAL=${TRIGGER_INTERVAL:-}
 
       # System Prompt
       - SYSTEM_PROMPT=${SYSTEM_PROMPT:-You are a helpful AI assistant with persistent memory capabilities.}
@@ -102,7 +114,7 @@ services:
       - open_webui_data:/app/backend/data
     environment:
       - OPENAI_API_BASE_URLS=http://api:8000/v1
-      - OPENAI_API_KEYS=${OPENAI_API_KEY}
+      - OPENAI_API_KEYS=${OPENAI_API_KEY:-local-dev-key}
       - WEBUI_AUTH=false
       - ENABLE_FOLLOW_UP_GENERATION=false
       - ENABLE_PERSISTENT_CONFIG=false
