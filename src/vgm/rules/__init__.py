@@ -49,6 +49,13 @@ from .load_audit import (
     RuleLoadSourceCoverageSummary,
     audit_rule_extraction_bundle,
 )
+from .adjudication import (
+    LlmRulesAdjudicator,
+    RulesAdjudicationDraft,
+    RulesAdjudicationOutcome,
+    RulesAdjudicationPrecedenceDraft,
+    verify_adjudication_draft,
+)
 from .rulings import (
     DeterministicPilotRulingEngine,
     LivePilotRulingEngine,
@@ -122,6 +129,11 @@ __all__ = [
     "RuleLoadGraphSummary",
     "RuleLoadSourceCoverageSummary",
     "audit_rule_extraction_bundle",
+    "LlmRulesAdjudicator",
+    "RulesAdjudicationDraft",
+    "RulesAdjudicationOutcome",
+    "RulesAdjudicationPrecedenceDraft",
+    "verify_adjudication_draft",
     "DeterministicPilotRulingEngine",
     "LivePilotRulingEngine",
     "LivePilotRulingInspection",

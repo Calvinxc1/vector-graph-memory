@@ -18,6 +18,7 @@ from vgm.rules import (
     PrecedenceEntry,
     RuleCitation,
     RuleReference,
+    RulesAdjudicationOutcome,
     RulesRulingResult,
 )
 
@@ -37,6 +38,28 @@ class FakeRulesRulingEngine:
     def inspect_request(self, request):
         self.inspect_calls.append(request)
         return build_live_ruling_inspection(request.question)
+
+
+class FakeRulesAdjudicator:
+    """Return a fixed raw LLM chat outcome and record the incoming evidence."""
+
+    def __init__(self, result: RulesRulingResult):
+        self.result = result
+        self.calls = []
+
+    def answer(self, request, inspection):
+        self.calls.append({"request": request, "inspection": inspection})
+        adjudicated = self.result.model_copy(
+            update={
+                "ruling": "Typed chat ruling answer.",
+                "backend": "llm-schema-chat",
+            },
+            deep=True,
+        )
+        return RulesAdjudicationOutcome(
+            result=adjudicated,
+            model_thinking=["Model weighed primary authority against the FAQ."],
+        )
 
 def build_rules_ruling_result() -> RulesRulingResult:
     """Create a fixed ruling result for OpenAI-model routing tests."""
@@ -170,6 +193,36 @@ def test_chat_completions_routes_rules_model_to_ruling_engine(monkeypatch):
     assert "Modifiers:" in response.choices[0].message.content
     assert "Precedence:" in response.choices[0].message.content
     assert response.model == server.RULES_CHAT_MODEL_ID
+
+
+def test_chat_completions_routes_rules_model_through_typed_chat_ruling_agent(monkeypatch):
+    test_state = server.AppState()
+    test_state.rules_ruling_engine = FakeRulesRulingEngine(build_rules_ruling_result())
+    test_state.rules_adjudicator = FakeRulesAdjudicator(build_rules_ruling_result())
+    monkeypatch.setattr(server, "state", test_state)
+
+    request = server.ChatCompletionRequest(
+        model=server.RULES_CHAT_MODEL_ID,
+        messages=[
+            server.ChatMessage(
+                role="user",
+                content="If another player already has an orbiter there, do I still get the cheaper landing cost?",
+            )
+        ],
+        stream=True,
+        user="rules-llm-session",
+    )
+
+    response = asyncio.run(server.chat_completions(request))
+    body = asyncio.run(_collect_streaming_response_body(response))
+
+    assert len(test_state.rules_ruling_engine.inspect_calls) == 1
+    assert test_state.rules_ruling_engine.calls == []
+    assert len(test_state.rules_adjudicator.calls) == 1
+    assert "Typed chat ruling answer." in body
+    assert "typed chat ruling" in body
+    assert "Model thinking:" in body
+    assert "Model weighed primary authority against the FAQ." in body
 
 
 def test_list_models_only_exposes_rules_model():

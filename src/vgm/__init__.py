@@ -77,6 +77,10 @@ from .rules import (
     RuleExtractionRunner,
     RuleEdge,
     RuleExtractionBundle,
+    LlmRulesAdjudicator,
+    RulesAdjudicationDraft,
+    RulesAdjudicationOutcome,
+    RulesAdjudicationPrecedenceDraft,
     RulesRulingRequest,
     RulesRulingResult,
     RuleCitation,
@@ -112,6 +116,7 @@ from .rules import (
     load_seti_pilot_bundles,
     make_rule_extraction_program,
     normalize_candidate_bundle,
+    verify_adjudication_draft,
 )
 
 # Schemas
@@ -208,6 +213,10 @@ __all__ = [
     "RuleExtractionRunner",
     "RuleEdge",
     "RuleExtractionBundle",
+    "LlmRulesAdjudicator",
+    "RulesAdjudicationDraft",
+    "RulesAdjudicationOutcome",
+    "RulesAdjudicationPrecedenceDraft",
     "RulesRulingRequest",
     "RulesRulingResult",
     "RuleCitation",
@@ -243,6 +252,7 @@ __all__ = [
     "load_seti_pilot_bundles",
     "make_rule_extraction_program",
     "normalize_candidate_bundle",
+    "verify_adjudication_draft",
     # Schemas
     "NodeMetadata",
     "EdgeMetadata",

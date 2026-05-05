@@ -44,8 +44,10 @@ from ..rag import (
     normalize_dspy_model_name,
 )
 from ..rules import (
+    LlmRulesAdjudicator,
     LivePilotRulingEngine,
     LivePilotRulingInspection,
+    RulesAdjudicationOutcome,
     RulesRulingRequest,
     RulesRulingResult,
 )
@@ -154,6 +156,7 @@ class AppState:
     rag_compile_manager: Optional[DspyCompileManager] = None
     rag_compile_task: Optional[asyncio.Task[None]] = None
     rules_ruling_engine: Optional[LivePilotRulingEngine] = None
+    rules_adjudicator: Optional[LlmRulesAdjudicator] = None
     qdrant: Optional[QdrantClient] = None
     janus: Optional[gremlin_client.Client] = None
     session_proposals: Dict[str, List[str]] = {}  # session_id -> list of proposal_ids
@@ -523,6 +526,7 @@ async def lifespan(_app: FastAPI):
         state.agent.store,
         project_id=memory_config.project_id,
     )
+    state.rules_adjudicator = LlmRulesAdjudicator(chat_model)
     if state.rag_synthesis_enabled:
         dspy_model_name = os.getenv("DSPY_MODEL_NAME") or normalize_dspy_model_name(llm_model)
         try:
@@ -801,6 +805,26 @@ def _append_request_trace_log(entry: RequestTraceLogEntry) -> str:
     return str(log_path)
 
 
+async def _answer_rules_request(
+    rules_request: RulesRulingRequest,
+) -> tuple[LivePilotRulingInspection, RulesRulingResult, RulesAdjudicationOutcome | None]:
+    """Inspect retrieved evidence and answer with LLM adjudication when configured."""
+
+    if state.rules_ruling_engine is None:
+        raise HTTPException(status_code=503, detail="Rules ruling engine not initialized")
+
+    inspection = state.rules_ruling_engine.inspect_request(rules_request)
+    if state.rules_adjudicator is None:
+        return inspection, state.rules_ruling_engine.answer(rules_request), None
+
+    adjudication_outcome = await asyncio.to_thread(
+        state.rules_adjudicator.answer,
+        rules_request,
+        inspection,
+    )
+    return inspection, adjudication_outcome.result, adjudication_outcome
+
+
 def _seed_origin_label(
     inspection: LivePilotRulingInspection,
     *,
@@ -860,7 +884,14 @@ def _format_rules_trace_for_thinking(
 
     lines.append(f"- Request: {request_id}")
     lines.append(f"- Log file: {log_path}")
-    lines.append("- Route: seti-rules-lawyer -> live pilot ruling")
+    if result.backend == "llm-schema-chat":
+        lines.append("- Route: seti-rules-lawyer -> retrieval -> typed chat ruling")
+    elif result.backend == "llm-raw-chat":
+        lines.append("- Route: seti-rules-lawyer -> retrieval -> raw chat agent")
+    elif result.backend == "llm-live-pilot":
+        lines.append("- Route: seti-rules-lawyer -> retrieval -> typed LLM adjudication")
+    else:
+        lines.append("- Route: seti-rules-lawyer -> live pilot ruling")
 
     if inspection.selected_seed_id:
         seed_line = (
@@ -1132,10 +1163,13 @@ def _build_streaming_chat_response(
     session_id: str,
     trace_summary: str | None,
     assistant_response: str,
+    model_thinking_blocks: list[str] | None = None,
 ) -> StreamingResponse:
     response_id = f"chatcmpl-{session_id}-{int(datetime.now().timestamp())}"
     created = int(datetime.now().timestamp())
     assistant_response, thinking_blocks = _extract_model_thinking(assistant_response)
+    if model_thinking_blocks:
+        thinking_blocks.extend(model_thinking_blocks)
     trace_summary = _append_model_thinking_to_trace(trace_summary, thinking_blocks)
     sections = []
     if trace_summary:
@@ -1197,12 +1231,11 @@ async def chat_completions(
         raise HTTPException(status_code=400, detail="No user message provided")
 
     if request.model == RULES_CHAT_MODEL_ID:
-        if state.rules_ruling_engine is None:
-            raise HTTPException(status_code=503, detail="Rules ruling engine not initialized")
         try:
             rules_request = RulesRulingRequest(question=latest_user_message)
-            inspection = state.rules_ruling_engine.inspect_request(rules_request)
-            result = state.rules_ruling_engine.answer(rules_request)
+            inspection, result, adjudication_outcome = await _answer_rules_request(rules_request)
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Rules ruling error: {exc}") from exc
         assistant_response = _format_rules_ruling_for_chat(result)
@@ -1227,6 +1260,11 @@ async def chat_completions(
                     ],
                     "inspection": inspection.model_dump(mode="json"),
                     "result": result.model_dump(mode="json"),
+                    "adjudication": (
+                        adjudication_outcome.model_dump(mode="json")
+                        if adjudication_outcome is not None
+                        else None
+                    ),
                     "abstain_kind": _rules_abstain_kind(inspection, result),
                 },
             )
@@ -1243,6 +1281,11 @@ async def chat_completions(
                     requested_seed_id=rules_request.seed_id,
                 ),
                 assistant_response=assistant_response,
+                model_thinking_blocks=(
+                    adjudication_outcome.model_thinking
+                    if adjudication_outcome is not None
+                    else None
+                ),
             )
         return _build_chat_completion_response(
             model=request.model,
@@ -1272,10 +1315,11 @@ async def chat_completions(
 async def pilot_rules_ruling(request: RulesRulingRequest) -> RulesRulingResult:
     """Return one structured ruling from the live SETI pilot graph."""
 
-    if state.rules_ruling_engine is None:
-        raise HTTPException(status_code=503, detail="Rules ruling engine not initialized")
     try:
-        return state.rules_ruling_engine.answer(request)
+        _inspection, result, _adjudication_outcome = await _answer_rules_request(request)
+        return result
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Rules ruling error: {exc}") from exc
 

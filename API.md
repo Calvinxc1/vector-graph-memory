@@ -2,7 +2,8 @@
 
 This document describes the current implemented API behavior.
 
-The API is still a memory-oriented interface over the Vector Graph Memory substrate. It is not yet a dedicated rules-lawyer API, even though the repository roadmap now includes that direction.
+The API is still built on the Vector Graph Memory substrate, but it now includes
+a narrow live `SETI` rules-lawyer pilot.
 
 Current authoritative package version:
 
@@ -13,6 +14,7 @@ Current authoritative package version:
 The current API provides:
 
 - an OpenAI-compatible chat interface
+- a live `SETI` pilot ruling path backed by retrieval, graph expansion, and the `RulesRulingResult` response schema
 - memory proposal and confirmation endpoints
 - audit-log access
 - optional DSPy-backed grounded answer synthesis behind feature flags
@@ -20,9 +22,9 @@ The current API provides:
 
 The API does not yet provide:
 
-- a formal rules-lawyer response schema
-- game-specific ruling endpoints
-- a productionized `SETI` adjudication path
+- a productionized rules-lawyer workflow beyond the bounded `SETI` pilot
+- broad game coverage outside the imported pilot slices
+- human review or release controls for accepted rulings
 
 ## Quick Start
 
@@ -110,7 +112,7 @@ Note: `start_api.sh` checks exported shell variables and does not source `.env`.
 
 Through Open WebUI, the currently exposed chat path is the live `SETI` pilot ruling engine. The legacy `vector-graph-memory` chat model is temporarily disabled at the OpenAI-compatible API surface so the UI cannot accidentally route into the memory-oriented interface during rules-lawyer testing.
 
-When `seti-rules-lawyer` is selected, Open WebUI routes the latest user message through the pilot ruling engine and renders the formatted ruling, citations, precedence chain, and streamed Thinking trace in the standard chat surface.
+When `seti-rules-lawyer` is selected, Open WebUI routes the latest user message through retrieval plus graph expansion, asks the configured PydanticAI chat model for a `RulesRulingResult`, and renders that ruling with the streamed Thinking trace in the standard chat surface. The legacy adjudication draft/screener path is present but disabled by default.
 
 ## DSPy Grounded Synthesis Status
 
@@ -140,13 +142,13 @@ See [dspy-rag-implementation.md](docs/plans/dspy-rag-implementation.md) for the 
 
 Standard OpenAI chat completions endpoint. The selected `model` determines which backend handles the request:
 
-- `seti-rules-lawyer`: live `SETI` pilot ruling path rendered into chat output
+- `seti-rules-lawyer`: live `SETI` pilot ruling path using retrieved graph evidence plus the `RulesRulingResult` schema
 - `vector-graph-memory`: currently rejected as temporarily disabled
 
 For `seti-rules-lawyer`, `stream: true` returns OpenAI-style SSE chunks for Open WebUI compatibility. The streamed output begins with a concise `<think>...</think>` diagnostic summary before the visible answer text:
 
-- `seti-rules-lawyer` shows route, seed origin, premise-screen results for invalid scenarios, inferred question issue, retrieval counts, top candidate cases, authority selection, fit-gate rationale, abstain details, and the per-request trace file path for deeper inspection.
-- If a downstream model response includes complete `<think>...</think>` blocks, the API removes those blocks from the visible answer and appends them under `Model thinking:` below the diagnostic trace inside the same Thinking section.
+- `seti-rules-lawyer` shows route, seed origin, premise-screen results for invalid scenarios, inferred question issue, retrieval counts, candidate diagnostics, authority selection, verifier output, abstain details, and the per-request trace file path for deeper inspection.
+- If the configured model returns thinking through PydanticAI or emits complete `<think>...</think>` blocks, the API keeps that thinking out of the visible answer and appends it under `Model thinking:` below the diagnostic trace inside the same Thinking section.
 
 The ruling or answer is still computed before streaming begins, so this improves inspection UX rather than first-token latency. Detailed per-request traces are written under `API_TRACE_LOG_PATH` (default: `./logs/api`) as one JSON file per request, partitioned by date, for example `./logs/api/requests/2026-05-01/<request-id>.json`.
 
@@ -317,7 +319,7 @@ The API server currently:
 2. Receives OpenAI-compatible chat requests.
 3. Uses the `user` field as the session identifier.
 4. Rejects `vector-graph-memory` chat requests while that legacy interface is temporarily disabled.
-5. Routes `seti-rules-lawyer` requests through the live pilot ruling engine.
+5. Routes `seti-rules-lawyer` requests through live retrieval, graph expansion, and `RulesRulingResult` response generation.
 6. Exposes proposal, confirmation, and audit endpoints for memory control.
 
 ## Known Gaps
@@ -326,7 +328,7 @@ The API server currently:
 - `start_api.sh` checks exported provider variables in the current shell and does not source `.env`.
 - JanusGraph schema initialization is manual for local library and local API development.
 - Session-scoped audit history does not currently apply the documented `limit` parameter.
-- The `seti-rules-lawyer` chat model currently renders the pilot ruling into plain chat text rather than returning the full typed ruling contract.
+- The OpenAI-compatible `seti-rules-lawyer` endpoint renders a `RulesRulingResult` into chat text; use `POST /rules/pilot/ruling` when the same typed ruling contract is needed directly.
 
 ## Development
 
