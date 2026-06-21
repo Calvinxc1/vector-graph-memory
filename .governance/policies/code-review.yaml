@@ -1,0 +1,12 @@
+id: code_review
+status: draft
+scope: coding_agents
+summary: Review posture for coding agents.
+rules:
+  - Present findings first.
+  - Order findings by severity.
+  - Ground findings in file and line references where available.
+  - Prioritize bugs, regressions, missing tests, security risk, data loss risk, and maintainability hazards with real impact.
+  - Put summaries after findings.
+  - If no issues are found, say that clearly and name residual test gaps or risk.
+

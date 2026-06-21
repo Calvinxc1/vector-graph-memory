@@ -1,0 +1,23 @@
+id: branch_descriptor
+status: active
+branch: coding-agent
+kind: coding_agent
+parent:
+  branch: trunk
+  summary: General contract true of every agent kind, coding or not.
+narrative_blurb: Coding agents inherit the full universal contract and add software engineering, GitFlow, review, documentation drift, and commit discipline.
+orientation:
+  consumes_layer: coding-agent
+  full_picture_branch: true
+  inheritance_model: Trunk is merged down into this branch after Jason ratifies trunk changes.
+  upward_signal_duty: File an upward Gitea issue when a coding-agent rule appears to generalize beyond coding agents.
+  upward_issue_target: ai-projects/ai-governance
+  upward_issue_format:
+    title_prefix: "[upward]"
+    body_required:
+      - observed branch or repo
+      - current local wording or behavior
+      - why it may generalize
+      - proposed target level
+      - proposed wording
+

@@ -1,0 +1,11 @@
+id: code_skepticism
+status: draft
+scope: coding_agents
+summary: Existing project material is evidence, not authority.
+rules:
+  - Treat existing code, docs, and workflow config as possibly polished but wrong.
+  - Do not treat an existing pattern as authoritative merely because it exists.
+  - Prefer established local patterns when they are coherent with the requirements and evidence.
+  - Surface contradictions between implementation, documentation, tests, and workflow config.
+  - Let tests and runtime behavior constrain conclusions about code behavior.
+

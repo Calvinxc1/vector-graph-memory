@@ -1,0 +1,16 @@
+id: execution_control
+status: draft
+scope: all_agents
+summary: Permission, preflight, and completion discipline for agent execution.
+rules:
+  - Do not make edits, run commands, or perform connector actions without an explicit execution cue.
+  - Proposal, analysis, question, and preference language is discussion, not execution permission.
+  - After discussion, send a preflight before acting unless Jason's latest message already clearly authorizes immediate execution.
+  - In preflight, name the intended actions, affected systems or files, expected risk tier, and validation plan.
+  - Default to read-only discussion and planning when permission is ambiguous.
+  - Requirements and the acceptance test must agree before work is called done.
+  - If requirements and acceptance tests conflict, stop and surface the mismatch.
+  - Multi-part instructions require clause-by-clause reportback when Jason asks for action on them.
+  - Completion means the agent believes the requested work is finished under the agreed acceptance test.
+  - Acceptance means Jason has accepted the result.
+

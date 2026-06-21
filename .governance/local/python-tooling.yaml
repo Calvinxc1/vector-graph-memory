@@ -1,0 +1,9 @@
+id: vector_graph_memory_python_tooling
+status: local
+scope: vector_graph_memory
+summary: Repository Python tooling rules.
+rules:
+  - Use uv as the Python package manager for this repository.
+  - Prefer uv run for Python command execution and tests.
+  - uv.lock is intentionally developer-local and not tracked in git for this repository.
+  - Do not commit uv.lock.
