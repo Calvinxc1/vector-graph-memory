@@ -12,7 +12,7 @@ Current `SETI` pilot status:
 - the rules extraction path now uses strongly typed `PydanticAI` output as the required contract boundary
 - the first live extraction path has reproduced the landing/orbiter seed under the current comparison rules
 - seed materialization, import, and verification tooling exist for loading those slices into Qdrant plus JanusGraph
-- a first live graph-backed ruling path exists for the frozen `SETI` pilot questions
+- a first live graph-backed ruling path retrieves evidence, expands graph context, and asks a typed PydanticAI adjudicator to draft verified `SETI` pilot rulings
 - a typed ruling-eval suite now scores retrieval nodes, expanded evidence, seed inference, case selection, citation choice, modifier choice, and precedence assembly separately
 - local inspection is available through direct database UIs:
   - Qdrant: `http://localhost:8111/dashboard/`
@@ -27,6 +27,7 @@ The repository currently contains:
 - a PydanticAI-based memory agent with proposal and confirmation workflows
 - Docker-based local development infrastructure, including Open WebUI
 - a DSPy-backed grounded-answer synthesis path behind feature flags
+- a PydanticAI-backed rules adjudication path for the live `SETI` pilot
 - a local evaluation fixture built around `SETI` rules-reference cases for the DSPy synthesis path
 
 The package metadata still reflects the currently implemented system:
@@ -53,6 +54,7 @@ Implemented now:
 
 - hybrid storage and traversal substrate
 - memory-oriented chat API
+- live `SETI` pilot rules adjudication through retrieved evidence plus typed LLM output
 - memory proposal and confirmation flow
 - JSONL audit logging
 - Dockerized local stack with Open WebUI
@@ -109,9 +111,9 @@ Current target game progression:
 
 Roadmap and planning documents:
 
-- [rules-lawyer-strategy.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-strategy.md)
-- [rules-lawyer-roadmap.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-roadmap.md)
-- [seti-pilot-next-steps.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/seti-pilot-next-steps.md)
+- [rules-lawyer-strategy.md](docs/plans/rules-lawyer-strategy.md)
+- [rules-lawyer-roadmap.md](docs/plans/rules-lawyer-roadmap.md)
+- [seti-pilot-next-steps.md](docs/plans/seti-pilot-next-steps.md)
 
 ## Current State And Known Gaps
 
@@ -130,11 +132,11 @@ What works today:
 What is incomplete or only partially implemented:
 
 - MongoDB audit logging is intended, but API startup does not yet wire MongoDB audit configuration end to end.
-- Local API startup via `./start_api.sh` requires `OPENAI_API_KEY` to already be exported in the shell and does not source `.env`.
+- Local API startup via `./start_api.sh` checks exported provider variables in the shell and does not source `.env`.
 - `ai_determined` trigger mode currently injects memory-review guidance on every turn rather than selectively deciding when to review.
 - `GET /memory/audit/{session_id}` accepts `limit`, but session-scoped audit queries do not currently enforce that limit.
 - JanusGraph schema initialization is still manual for local library and local API use outside the default Dockerized path.
-- The rules-lawyer layer now has seed, extraction, and import scaffolding, but it is still not an implemented end-user product path.
+- The rules-lawyer layer is still a narrow `SETI` pilot; broader games, broader rule coverage, and production review workflows are not implemented.
 - `scripts/verify_manual_seed.py` is now generic by default and only runs support-path checks for seed manifests that define them.
 
 ## Architecture
@@ -163,7 +165,7 @@ This is the recommended path for trying the repository as it exists today.
 ```bash
 # 1. Configure environment
 cp .env.example .env
-# Edit .env and set OPENAI_API_KEY
+# Edit .env for either OpenAI or external Ollama provider settings
 
 # 2. Start the default stack
 docker compose up -d
@@ -229,14 +231,25 @@ docker compose up -d qdrant janusgraph
 # 4. Initialize JanusGraph schema once
 uv run python scripts/init_janusgraph_schema.py
 
-# 5. Export your API key in the current shell
+# 5. Export provider settings in the current shell
 export OPENAI_API_KEY=sk-...
 
 # 6. Start the API
 ./start_api.sh
 ```
 
-Important caveat: `start_api.sh` does not currently source `.env`.
+For an external Ollama service, export the provider and endpoint instead:
+
+```bash
+export LLM_PROVIDER=ollama
+export EMBEDDING_PROVIDER=ollama
+export OLLAMA_BASE_URL=https://ollama.example.com/v1
+export OLLAMA_CHAT_MODEL=llama3.1:8b
+export OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+```
+
+Important caveat: `start_api.sh` checks exported shell variables and does not
+source `.env`.
 
 ## Open WebUI Integration
 
@@ -258,6 +271,16 @@ For local host-run utilities such as `scripts/import_manual_seed.py` and
 
 These defaults are intended to match the Docker Compose host port exposure.
 
+Before rule bundles are materialized or imported, the loader now runs a generic
+rule-load audit. The audit checks source coverage, direct source-to-rule
+grounding, edge integrity, schema completeness, and authority metadata. You can
+run it directly with:
+
+```bash
+uv run python scripts/audit_rule_load.py \
+  --manifest tests/fixtures/rag_eval/seti_landing_orbiter_seed_v1_manifest.json
+```
+
 For the live pilot ruling path, the main local utility scripts are:
 
 - `uv run python scripts/run_pilot_ruling.py --question '...'`
@@ -265,16 +288,50 @@ For the live pilot ruling path, the main local utility scripts are:
 
 The eval runner executes the tracked frozen suite at
 `tests/fixtures/rag_eval/seti_rules_ruling_eval_v1.jsonl` and emits a typed JSON report.
-The API now also exposes the same intermediate inspection trace through
-`POST /rules/pilot/inspect` for debugging retrieval, seed selection, and case ranking.
+The API now also exposes the intermediate inspection trace through
+`POST /rules/pilot/inspect` for debugging retrieval, seed inference, issue inference,
+and graph expansion. `POST /rules/pilot/ruling` and the OpenAI-compatible
+`seti-rules-lawyer` chat path now pass retrieved evidence to a PydanticAI chat
+agent using the same `RulesRulingResult` schema as the deterministic responses.
+The older adjudication draft/screener path is still present in code but disabled
+by default.
 
 If you want to use an external Open WebUI instance, configure:
 
 - base URL: `http://localhost:8052/vgm-api/v1`
 - API key: any value for the current default local setup
-- model: `vector-graph-memory`
+- model: `seti-rules-lawyer` for the live `SETI` pilot ruling path through Open WebUI
+
+The legacy `vector-graph-memory` chat model is currently disabled at the
+OpenAI-compatible API surface so Open WebUI cannot accidentally route into the
+memory-oriented interface during rules-lawyer testing.
+
+When Open WebUI uses streaming chat, the exposed rules model prepends a collapsible
+Thinking trace that summarizes routing, evidence, and fallback behavior. Each
+trace also includes the request trace log path from `API_TRACE_LOG_PATH`
+(default: `./logs/api`) for deeper per-request JSON diagnostics under
+`requests/<date>/<request-id>.json`. If the configured model returns thinking
+through PydanticAI or emits complete `<think>...</think>` blocks, the API appends
+that model thinking below the diagnostic details inside the same Thinking section
+and keeps it out of the visible answer text.
+
+The default Compose stack also disables Open WebUI follow-up prompt generation
+at startup and sets `ENABLE_PERSISTENT_CONFIG=false` so that this interface
+default is enforced from Compose on each restart rather than drifting via
+persisted UI state.
 
 If Open WebUI is on the same Docker network and you want to bypass the proxy, use `http://api:8000/v1` instead.
+
+## Validation
+
+For local validation, use the same dependency shape as CI:
+
+```bash
+uv sync --all-extras
+uv run pytest
+```
+
+The full extras install matters because the test suite includes API-path coverage that imports optional API dependencies.
 
 ## DSPy Synthesis Status
 
@@ -293,15 +350,15 @@ What it does not yet mean:
 - the DSPy path is still grounded-answer infrastructure, not a full ruling engine
 - successful eval runs do not by themselves validate the future game-specific ingestion pipeline
 
-See [dspy-rag-implementation.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/dspy-rag-implementation.md) for the implementation plan.
+See [dspy-rag-implementation.md](docs/plans/dspy-rag-implementation.md) for the implementation plan.
 
 ## Docs
 
-- [API.md](/home/jcherry/Documents/storage/git/vector-graph-memory/API.md): current API behavior, setup, and caveats
-- [dspy-rag-implementation.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/dspy-rag-implementation.md): DSPy synthesis implementation plan
-- [rules-lawyer-strategy.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-strategy.md): product strategy for the rules-lawyer direction
-- [rules-lawyer-roadmap.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-roadmap.md): staged game roadmap
-- [seti-pilot-next-steps.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/seti-pilot-next-steps.md): immediate `SETI` pilot plan
+- [API.md](API.md): current API behavior, setup, and caveats
+- [dspy-rag-implementation.md](docs/plans/dspy-rag-implementation.md): DSPy synthesis implementation plan
+- [rules-lawyer-strategy.md](docs/plans/rules-lawyer-strategy.md): product strategy for the rules-lawyer direction
+- [rules-lawyer-roadmap.md](docs/plans/rules-lawyer-roadmap.md): staged game roadmap
+- [seti-pilot-next-steps.md](docs/plans/seti-pilot-next-steps.md): immediate `SETI` pilot plan
 
 ## Near-Term Development Priorities
 
@@ -332,4 +389,4 @@ Because of that, existing code and documentation should be treated as potentiall
 
 ## License
 
-See [LICENSE](/home/jcherry/Documents/storage/git/vector-graph-memory/LICENSE) for details.
+See [LICENSE](LICENSE) for details.

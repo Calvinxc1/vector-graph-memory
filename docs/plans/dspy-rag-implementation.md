@@ -34,9 +34,9 @@ That direction depends partly on this DSPy layer, but it should not be collapsed
 
 Related planning docs:
 
-- [rules-lawyer-strategy.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-strategy.md)
-- [rules-lawyer-roadmap.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/rules-lawyer-roadmap.md)
-- [seti-pilot-next-steps.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/seti-pilot-next-steps.md)
+- [rules-lawyer-strategy.md](rules-lawyer-strategy.md)
+- [rules-lawyer-roadmap.md](rules-lawyer-roadmap.md)
+- [seti-pilot-next-steps.md](seti-pilot-next-steps.md)
 
 ## Current Constraints
 

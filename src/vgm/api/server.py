@@ -1,25 +1,34 @@
 """FastAPI server with OpenAI-compatible API for Open WebUI integration."""
 
 import asyncio
+import json
 import os
 import logging
+import re
+from pathlib import Path
+from threading import Lock
 from typing import Any, Dict, List, Optional, Literal, cast
 from datetime import datetime
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from fastapi.responses import HTMLResponse, StreamingResponse
+from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 from gremlin_python.driver import client as gremlin_client  # type: ignore[import-untyped]
-from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
 from dotenv import load_dotenv
 
 from .. import __version__ as PACKAGE_VERSION
-from ..MemoryAgent import MemoryAgent
+from ..MemoryAgent import MemoryAgent, MemoryRunTrace
 from ..config import MemoryConfig, MemoryTriggerConfig, AuditConfig
+from ..model_provider import (
+    build_chat_model_from_env,
+    build_embedding_model_from_env,
+    chat_model_name_from_env,
+    embedding_model_name_from_env,
+)
 from ..rag import (
-    ConversationTurn,
     DEFAULT_EVAL_SOURCE_DIR,
     DEFAULT_EVAL_SUITE_PATH,
     DspyArtifactStore,
@@ -35,8 +44,10 @@ from ..rag import (
     normalize_dspy_model_name,
 )
 from ..rules import (
+    LlmRulesAdjudicator,
     LivePilotRulingEngine,
     LivePilotRulingInspection,
+    RulesAdjudicationOutcome,
     RulesRulingRequest,
     RulesRulingResult,
 )
@@ -110,6 +121,27 @@ class ModelList(BaseModel):
     data: List[ModelInfo]
 
 
+class TraceCandidateSummary(BaseModel):
+    """Compact case-candidate summary for UI traces and request logs."""
+
+    question_id: str
+    question_score: float
+    evidence_score: int
+    matched_reference_count: int
+
+
+class RequestTraceLogEntry(BaseModel):
+    """Persistent request-scoped diagnostic log entry."""
+
+    request_id: str
+    session_id: str
+    model: str
+    route: str
+    stream: bool
+    created_at: str
+    trace: Dict[str, Any] = Field(default_factory=dict)
+
+
 # --- Global state ---
 
 
@@ -124,6 +156,7 @@ class AppState:
     rag_compile_manager: Optional[DspyCompileManager] = None
     rag_compile_task: Optional[asyncio.Task[None]] = None
     rules_ruling_engine: Optional[LivePilotRulingEngine] = None
+    rules_adjudicator: Optional[LlmRulesAdjudicator] = None
     qdrant: Optional[QdrantClient] = None
     janus: Optional[gremlin_client.Client] = None
     session_proposals: Dict[str, List[str]] = {}  # session_id -> list of proposal_ids
@@ -131,6 +164,13 @@ class AppState:
 
 state = AppState()
 logger = logging.getLogger(__name__)
+_REQUEST_TRACE_WRITE_LOCK = Lock()
+
+MEMORY_CHAT_MODEL_ID = "vector-graph-memory"
+RULES_CHAT_MODEL_ID = "seti-rules-lawyer"
+DEFAULT_API_TRACE_LOG_PATH = "./logs/api"
+RULES_CASE_SELECTION_THRESHOLD = 0.14
+_THINKING_BLOCK_PATTERN = re.compile(r"<think>(.*?)</think>", re.IGNORECASE | re.DOTALL)
 
 
 _TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
@@ -391,6 +431,7 @@ async def lifespan(_app: FastAPI):
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+    logger.info("API request trace log path: %s", _request_trace_log_path())
 
     print("🚀 Initializing Vector Graph Memory API...")
 
@@ -409,8 +450,10 @@ async def lifespan(_app: FastAPI):
     print(f"  ✓ Connected to JanusGraph at {janusgraph_host}:{janusgraph_port}")
 
     # Initialize memory agent
-    embedding_model = OpenAIEmbeddingModel("text-embedding-3-small")
-    llm_model = os.getenv("LLM_MODEL", "openai:gpt-4o-mini")
+    llm_model = chat_model_name_from_env()
+    chat_model = build_chat_model_from_env(llm_model)
+    embedding_model_name = embedding_model_name_from_env()
+    embedding_model = build_embedding_model_from_env(embedding_model_name)
 
     memory_config = MemoryConfig(
         use_case_description=os.getenv(
@@ -464,7 +507,7 @@ async def lifespan(_app: FastAPI):
         qdrant_client=state.qdrant,
         janus_client=state.janus,
         embedding_model=embedding_model,
-        llm_model=llm_model,
+        llm_model=chat_model,
         system_prompt=system_prompt,
         memory_config=memory_config,
         trigger_config=trigger_config,
@@ -483,6 +526,7 @@ async def lifespan(_app: FastAPI):
         state.agent.store,
         project_id=memory_config.project_id,
     )
+    state.rules_adjudicator = LlmRulesAdjudicator(chat_model)
     if state.rag_synthesis_enabled:
         dspy_model_name = os.getenv("DSPY_MODEL_NAME") or normalize_dspy_model_name(llm_model)
         try:
@@ -584,6 +628,7 @@ async def lifespan(_app: FastAPI):
 
     print("  ✓ Memory Agent initialized")
     print(f"    - Model: {llm_model}")
+    print(f"    - Embeddings: {embedding_model_name}")
     print(f"    - Project: {memory_config.project_id}")
     print(f"    - Trigger: {trigger_config.mode}")
     print(f"    - RAG context seam enabled: {state.rag_context_enabled}")
@@ -708,6 +753,439 @@ def _normalize_gremlin_rows(rows: list[Any]) -> list[Any]:
     return [_normalize_gremlin_value(row) for row in rows]
 
 
+def _format_rule_citation(citation: Any) -> str:
+    label = citation.citation_label or citation.title
+    locator = citation.locator or citation.citation_short
+    if locator:
+        return f"{label} ({locator})"
+    return label
+
+
+def _format_rules_ruling_for_chat(result: RulesRulingResult) -> str:
+    lines = [result.ruling]
+
+    if result.primary_citation:
+        lines.extend(("", f"Primary authority: {_format_rule_citation(result.primary_citation)}"))
+
+    if result.modifying_citations:
+        lines.append("")
+        lines.append("Modifiers:")
+        lines.extend(f"- {_format_rule_citation(citation)}" for citation in result.modifying_citations)
+
+    if result.supporting_citations:
+        lines.append("")
+        lines.append("Supporting authority:")
+        lines.extend(f"- {_format_rule_citation(citation)}" for citation in result.supporting_citations)
+
+    if result.precedence_order:
+        lines.append("")
+        lines.append("Precedence:")
+        lines.extend(f"{entry.order}. {entry.summary}" for entry in result.precedence_order)
+
+    if result.uncertainty:
+        lines.extend(("", f"Uncertainty: {result.uncertainty}"))
+
+    return "\n".join(lines)
+
+
+def _request_trace_log_path() -> Path:
+    configured = os.getenv("API_TRACE_LOG_PATH", DEFAULT_API_TRACE_LOG_PATH)
+    return Path(os.path.expanduser(configured)).resolve()
+
+
+def _append_request_trace_log(entry: RequestTraceLogEntry) -> str:
+    base_dir = _request_trace_log_path()
+    dated_dir = base_dir / "requests" / datetime.now().strftime("%Y-%m-%d")
+    log_path = dated_dir / f"{entry.request_id}.json"
+    dated_dir.mkdir(parents=True, exist_ok=True)
+    with _REQUEST_TRACE_WRITE_LOCK:
+        with open(log_path, "w", encoding="utf-8") as handle:
+            json.dump(entry.model_dump(mode="json"), handle, indent=2)
+            handle.write("\n")
+    return str(log_path)
+
+
+async def _answer_rules_request(
+    rules_request: RulesRulingRequest,
+) -> tuple[LivePilotRulingInspection, RulesRulingResult, RulesAdjudicationOutcome | None]:
+    """Inspect retrieved evidence and answer with LLM adjudication when configured."""
+
+    if state.rules_ruling_engine is None:
+        raise HTTPException(status_code=503, detail="Rules ruling engine not initialized")
+
+    inspection = state.rules_ruling_engine.inspect_request(rules_request)
+    if state.rules_adjudicator is None:
+        return inspection, state.rules_ruling_engine.answer(rules_request), None
+
+    adjudication_outcome = await asyncio.to_thread(
+        state.rules_adjudicator.answer,
+        rules_request,
+        inspection,
+    )
+    return inspection, adjudication_outcome.result, adjudication_outcome
+
+
+def _seed_origin_label(
+    inspection: LivePilotRulingInspection,
+    *,
+    requested_seed_id: str | None,
+) -> str:
+    if requested_seed_id:
+        return "request override"
+    if inspection.seed_inference.selected_seed_id:
+        return "question inference"
+    if inspection.evidence.seed_id:
+        return "retrieved evidence majority"
+    return "unresolved"
+
+
+def _candidate_summaries(
+    inspection: LivePilotRulingInspection,
+    *,
+    limit: int = 3,
+) -> list[TraceCandidateSummary]:
+    return [
+        TraceCandidateSummary(
+            question_id=candidate.question_id,
+            question_score=candidate.question_score,
+            evidence_score=candidate.evidence_score,
+            matched_reference_count=len(candidate.matched_reference_ids),
+        )
+        for candidate in inspection.candidate_cases[:limit]
+    ]
+
+
+def _rules_abstain_kind(
+    inspection: LivePilotRulingInspection,
+    result: RulesRulingResult,
+) -> str | None:
+    if not result.abstain:
+        return None
+    if inspection.premise_screen.status != "valid":
+        return "invalid_premise"
+    if not inspection.evidence.nodes:
+        return "no_evidence"
+    if inspection.selected_seed_id is None:
+        return "seed_unresolved"
+    if inspection.candidate_cases and inspection.selected_case is None:
+        return "near_miss"
+    return "unsupported"
+
+
+def _format_rules_trace_for_thinking(
+    inspection: LivePilotRulingInspection,
+    result: RulesRulingResult,
+    *,
+    request_id: str,
+    log_path: str,
+    requested_seed_id: str | None = None,
+) -> str:
+    lines = ["<think>", "Trace summary:"]
+
+    lines.append(f"- Request: {request_id}")
+    lines.append(f"- Log file: {log_path}")
+    if result.backend == "llm-schema-chat":
+        lines.append("- Route: seti-rules-lawyer -> retrieval -> typed chat ruling")
+    elif result.backend == "llm-raw-chat":
+        lines.append("- Route: seti-rules-lawyer -> retrieval -> raw chat agent")
+    elif result.backend == "llm-live-pilot":
+        lines.append("- Route: seti-rules-lawyer -> retrieval -> typed LLM adjudication")
+    else:
+        lines.append("- Route: seti-rules-lawyer -> live pilot ruling")
+
+    if inspection.selected_seed_id:
+        seed_line = (
+            f"- Seed: {inspection.selected_seed_id}"
+            f" via {_seed_origin_label(inspection, requested_seed_id=requested_seed_id)}"
+        )
+        if inspection.seed_inference.selected_score > 0:
+            seed_line += f" (score {inspection.seed_inference.selected_score:.2f})"
+        lines.append(seed_line)
+    elif inspection.seed_inference.candidates:
+        lines.append(
+            "- Seed inference did not clear threshold; "
+            f"top score was {inspection.seed_inference.candidates[0].score:.2f}."
+        )
+
+    if inspection.issue_inference.issue_type != "unsupported_unknown":
+        lines.append(
+            "- Question issue: "
+            f"{inspection.issue_inference.issue_type} "
+            f"(confidence {inspection.issue_inference.confidence:.2f})"
+        )
+    if inspection.premise_screen.status != "valid":
+        lines.append(
+            "- Premise screen: "
+            f"{inspection.premise_screen.status} "
+            f"(confidence {inspection.premise_screen.confidence:.2f})"
+        )
+        if inspection.premise_screen.reason:
+            lines.append(f"- Premise reason: {inspection.premise_screen.reason}")
+
+    if inspection.selected_case:
+        lines.append(
+            "- Matched case: "
+            f"{inspection.selected_case.question_id} "
+            f"(question {inspection.selected_case.question_score:.2f}, "
+            f"evidence {inspection.selected_case.evidence_score}, "
+            f"matched refs {len(inspection.selected_case.matched_reference_ids)})"
+        )
+    elif inspection.candidate_cases:
+        top_case = inspection.candidate_cases[0]
+        lines.append(
+            f"- No supported case cleared threshold {RULES_CASE_SELECTION_THRESHOLD:.2f}; "
+            f"top candidate was {top_case.question_id} "
+            f"(question {top_case.question_score:.2f}, evidence {top_case.evidence_score}, "
+            f"matched refs {len(top_case.matched_reference_ids)})."
+        )
+    else:
+        lines.append("- No supported case candidates were available for this question.")
+
+    lines.append(
+        "- Retrieval: "
+        f"{len(inspection.evidence.retrieved_node_ids)} initial nodes, "
+        f"{len(inspection.evidence.expanded_node_ids)} expanded nodes, "
+        f"{len(inspection.evidence.edges)} edges traversed."
+    )
+
+    candidate_summaries = _candidate_summaries(inspection)
+    if candidate_summaries:
+        candidate_line = "; ".join(
+            f"{candidate.question_id} (q={candidate.question_score:.2f}, "
+            f"e={candidate.evidence_score}, refs={candidate.matched_reference_count})"
+            for candidate in candidate_summaries
+        )
+        lines.append(f"- Top candidates: {candidate_line}")
+
+    if result.primary_citation:
+        lines.append(f"- Primary authority: {_format_rule_citation(result.primary_citation)}")
+
+    if result.modifying_citations:
+        modifier_labels = ", ".join(
+            _format_rule_citation(citation) for citation in result.modifying_citations
+        )
+        lines.append(f"- Modifiers considered: {modifier_labels}")
+
+    if inspection.evidence.source_nodes:
+        source_labels = ", ".join(
+            _format_rule_citation(source)
+            for source in inspection.evidence.source_nodes[:3]
+        )
+        lines.append(f"- Retrieved sources: {source_labels}")
+
+    if result.precedence_order:
+        lines.append(f"- Control rationale: {result.precedence_order[0].summary}")
+
+    if inspection.selected_case_issue_mismatch_reason:
+        lines.append(f"- Fit gate: {inspection.selected_case_issue_mismatch_reason}")
+
+    abstain_kind = _rules_abstain_kind(inspection, result)
+    if result.abstain and result.uncertainty:
+        if abstain_kind is not None:
+            lines.append(f"- Abstain kind: {abstain_kind}")
+        lines.append(f"- Abstain reason: {result.uncertainty}")
+
+    lines.append("</think>")
+    return "\n".join(lines)
+
+
+def _format_memory_trace_for_thinking(
+    *,
+    request_id: str,
+    log_path: str,
+    route: str,
+    rag_context: Any | None,
+    dspy_attempted: bool,
+    dspy_used: bool,
+    dspy_backend: str | None,
+    dspy_failure: str | None,
+    memory_trace: MemoryRunTrace | None,
+    new_proposal_count: int,
+    final_answer_source: str,
+) -> str:
+    lines = ["<think>", "Trace summary:"]
+    lines.append(f"- Request: {request_id}")
+    lines.append(f"- Log file: {log_path}")
+    lines.append(f"- Route: {route}")
+
+    if rag_context is not None:
+        lines.append(
+            "- RAG context: "
+            f"{len(rag_context.retrieved_passages)} passages, "
+            f"{len(rag_context.conversation_history)} history turns."
+        )
+    else:
+        lines.append("- RAG context: not built.")
+
+    if dspy_attempted:
+        if dspy_used:
+            lines.append(
+                f"- DSPy synthesis: returned answer via {dspy_backend or 'unknown backend'}."
+            )
+        elif dspy_failure:
+            lines.append(f"- DSPy synthesis: failed and fell back ({dspy_failure}).")
+        else:
+            lines.append("- DSPy synthesis: attempted but returned no answer; fell back.")
+    else:
+        lines.append("- DSPy synthesis: not attempted.")
+
+    if memory_trace is not None:
+        lines.append(
+            "- Memory review trigger: "
+            f"{memory_trace.trigger_mode}, activated={memory_trace.memory_check_triggered}."
+        )
+        if memory_trace.tool_calls:
+            lines.append(
+                "- Tools called: "
+                + ", ".join(tool.tool_name for tool in memory_trace.tool_calls)
+            )
+            for tool in memory_trace.tool_calls[:3]:
+                args_summary = ", ".join(f"{key}={value!r}" for key, value in tool.arguments.items())
+                lines.append(
+                    f"- Tool detail: {tool.tool_name}({args_summary}) -> {tool.result_summary}"
+                )
+        else:
+            lines.append("- Tools called: none.")
+    else:
+        lines.append("- MemoryAgent trace: unavailable.")
+
+    if new_proposal_count:
+        lines.append(f"- Pending memory proposals added: {new_proposal_count}")
+
+    lines.append(f"- Final answer source: {final_answer_source}")
+    lines.append("</think>")
+    return "\n".join(lines)
+
+
+def _build_chat_completion_response(
+    *,
+    model: str,
+    session_id: str,
+    prompt_text: str,
+    assistant_response: str,
+) -> ChatCompletionResponse:
+    return ChatCompletionResponse(
+        id=f"chatcmpl-{session_id}-{int(datetime.now().timestamp())}",
+        created=int(datetime.now().timestamp()),
+        model=model,
+        choices=[
+            ChatCompletionChoice(
+                index=0,
+                message=ChatMessage(role="assistant", content=assistant_response),
+                finish_reason="stop",
+            )
+        ],
+        usage=ChatCompletionUsage(
+            prompt_tokens=len(prompt_text.split()),
+            completion_tokens=len(assistant_response.split()),
+            total_tokens=len(prompt_text.split()) + len(assistant_response.split()),
+        ),
+    )
+
+
+def _build_chat_completion_chunk(
+    *,
+    response_id: str,
+    created: int,
+    model: str,
+    delta: dict[str, str],
+    finish_reason: str | None = None,
+) -> str:
+    return json.dumps(
+        {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": delta,
+                    "finish_reason": finish_reason,
+                }
+            ],
+        }
+    )
+
+
+def _split_stream_sections(assistant_response: str) -> list[str]:
+    sections = assistant_response.split("\n\n")
+    if not sections:
+        return [assistant_response]
+    streamed_sections = [sections[0]]
+    streamed_sections.extend(f"\n\n{section}" for section in sections[1:])
+    return streamed_sections
+
+
+def _extract_model_thinking(assistant_response: str) -> tuple[str, list[str]]:
+    """Remove complete model-supplied thinking blocks from visible response text."""
+
+    thinking_blocks = [
+        match.group(1).strip()
+        for match in _THINKING_BLOCK_PATTERN.finditer(assistant_response)
+        if match.group(1).strip()
+    ]
+    if not thinking_blocks:
+        return assistant_response, []
+
+    visible_response = _THINKING_BLOCK_PATTERN.sub("", assistant_response).strip()
+    return visible_response, thinking_blocks
+
+
+def _append_model_thinking_to_trace(
+    trace_summary: str | None,
+    thinking_blocks: list[str],
+) -> str | None:
+    """Append model-supplied thinking below diagnostic trace details."""
+
+    if not thinking_blocks:
+        return trace_summary
+
+    model_thinking = "\n\nModel thinking:\n" + "\n\n".join(thinking_blocks)
+    if trace_summary is None:
+        return f"<think>{model_thinking}\n</think>"
+
+    closing_tag_match = re.search(r"</think>\s*$", trace_summary, flags=re.IGNORECASE)
+    if closing_tag_match is None:
+        return f"{trace_summary}{model_thinking}"
+
+    return (
+        trace_summary[: closing_tag_match.start()]
+        + model_thinking
+        + "\n"
+        + trace_summary[closing_tag_match.start() :]
+    )
+
+
+def _build_streaming_chat_response(
+    *,
+    model: str,
+    session_id: str,
+    trace_summary: str | None,
+    assistant_response: str,
+    model_thinking_blocks: list[str] | None = None,
+) -> StreamingResponse:
+    response_id = f"chatcmpl-{session_id}-{int(datetime.now().timestamp())}"
+    created = int(datetime.now().timestamp())
+    assistant_response, thinking_blocks = _extract_model_thinking(assistant_response)
+    if model_thinking_blocks:
+        thinking_blocks.extend(model_thinking_blocks)
+    trace_summary = _append_model_thinking_to_trace(trace_summary, thinking_blocks)
+    sections = []
+    if trace_summary:
+        sections.append(trace_summary)
+    sections.extend(_split_stream_sections(assistant_response))
+
+    async def event_stream():
+        yield f"data: {_build_chat_completion_chunk(response_id=response_id, created=created, model=model, delta={'role': 'assistant'})}\n\n"
+        for section in sections:
+            yield f"data: {_build_chat_completion_chunk(response_id=response_id, created=created, model=model, delta={'content': section})}\n\n"
+        yield f"data: {_build_chat_completion_chunk(response_id=response_id, created=created, model=model, delta={}, finish_reason='stop')}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 # --- Endpoints ---
 
 
@@ -724,142 +1202,111 @@ async def root():
 @app.get("/v1/models")
 async def list_models() -> ModelList:
     """List available models (OpenAI compatible)."""
+    created = int(datetime.now().timestamp())
     return ModelList(
         data=[
             ModelInfo(
-                id="vector-graph-memory",
-                created=int(datetime.now().timestamp()),
-            )
+                id=RULES_CHAT_MODEL_ID,
+                created=created,
+            ),
         ]
     )
 
 
-@app.post("/v1/chat/completions")
-async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResponse:
+@app.post("/v1/chat/completions", response_model=None)
+async def chat_completions(
+    request: ChatCompletionRequest,
+) -> ChatCompletionResponse | StreamingResponse:
     """OpenAI-compatible chat completions endpoint."""
-    if not state.agent:
-        raise HTTPException(status_code=503, detail="Agent not initialized")
-
-    # Extract messages
     if not request.messages:
         raise HTTPException(status_code=400, detail="No messages provided")
 
     session_id = request.user or "default"
+    request_id = f"{session_id}-{uuid4().hex[:8]}"
+    latest_user_message = next(
+        (message.content for message in reversed(request.messages) if message.role == "user"),
+        None,
+    )
+    if latest_user_message is None:
+        raise HTTPException(status_code=400, detail="No user message provided")
 
-    rag_context = None
-    if (state.rag_context_enabled or state.rag_synthesis_enabled) and state.rag_context_builder:
+    if request.model == RULES_CHAT_MODEL_ID:
         try:
-            rag_messages = [
-                ConversationTurn(role=msg.role, content=msg.content)
-                for msg in request.messages
-            ]
-            rag_context = state.rag_context_builder.build_from_messages(
-                messages=rag_messages,
+            rules_request = RulesRulingRequest(question=latest_user_message)
+            inspection, result, adjudication_outcome = await _answer_rules_request(rules_request)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Rules ruling error: {exc}") from exc
+        assistant_response = _format_rules_ruling_for_chat(result)
+        log_path = _append_request_trace_log(
+            RequestTraceLogEntry(
+                request_id=request_id,
                 session_id=session_id,
-            )
-            logger.info(
-                "[RAG] Built context for session=%s passages=%d history_turns=%d",
-                session_id,
-                len(rag_context.retrieved_passages),
-                len(rag_context.conversation_history),
-            )
-        except Exception:
-            logger.exception(
-                "[RAG] Failed to build deterministic context for session=%s",
-                session_id,
-            )
-            rag_context = None
-
-    if state.rag_synthesis_enabled and state.rag_compile_manager:
-        _maybe_start_background_compile()
-
-    if state.rag_synthesis_enabled and state.rag_synthesizer and rag_context:
-        try:
-            rag_result = state.rag_synthesizer.synthesize(rag_context)
-            logger.info(
-                "[RAG] Synthesized answer for session=%s backend=%s cited_sources=%d abstain=%s",
-                session_id,
-                rag_result.backend,
-                len(rag_result.cited_source_ids),
-                rag_result.abstain,
-            )
-            if rag_result.answer:
-                return ChatCompletionResponse(
-                    id=f"chatcmpl-{session_id}-{int(datetime.now().timestamp())}",
-                    created=int(datetime.now().timestamp()),
-                    model=request.model,
-                    choices=[
-                        ChatCompletionChoice(
-                            index=0,
-                            message=ChatMessage(role="assistant", content=rag_result.answer),
-                            finish_reason="stop",
-                        )
-                    ],
-                    usage=ChatCompletionUsage(
-                        prompt_tokens=len(rag_context.retrieval_query.split()),
-                        completion_tokens=len(rag_result.answer.split()),
-                        total_tokens=(
-                            len(rag_context.retrieval_query.split())
-                            + len(rag_result.answer.split())
-                        ),
+                model=request.model,
+                route="seti-rules-lawyer",
+                stream=bool(request.stream),
+                created_at=datetime.now().isoformat(),
+                trace={
+                    "question": rules_request.question,
+                    "seed_origin": _seed_origin_label(
+                        inspection,
+                        requested_seed_id=rules_request.seed_id,
                     ),
-                )
-            logger.warning(
-                "[RAG] Baseline DSPy synthesizer returned an empty answer for session=%s; falling back",
-                session_id,
+                    "selection_threshold": RULES_CASE_SELECTION_THRESHOLD,
+                    "candidate_summaries": [
+                        candidate.model_dump(mode="json")
+                        for candidate in _candidate_summaries(inspection)
+                    ],
+                    "inspection": inspection.model_dump(mode="json"),
+                    "result": result.model_dump(mode="json"),
+                    "adjudication": (
+                        adjudication_outcome.model_dump(mode="json")
+                        if adjudication_outcome is not None
+                        else None
+                    ),
+                    "abstain_kind": _rules_abstain_kind(inspection, result),
+                },
             )
-        except Exception:
-            logger.exception(
-                "[RAG] DSPy synthesis failed for session=%s; falling back to MemoryAgent",
-                session_id,
+        )
+        if request.stream:
+            return _build_streaming_chat_response(
+                model=request.model,
+                session_id=session_id,
+                trace_summary=_format_rules_trace_for_thinking(
+                    inspection,
+                    result,
+                    request_id=request_id,
+                    log_path=log_path,
+                    requested_seed_id=rules_request.seed_id,
+                ),
+                assistant_response=assistant_response,
+                model_thinking_blocks=(
+                    adjudication_outcome.model_thinking
+                    if adjudication_outcome is not None
+                    else None
+                ),
             )
+        return _build_chat_completion_response(
+            model=request.model,
+            session_id=session_id,
+            prompt_text=latest_user_message,
+            assistant_response=assistant_response,
+        )
 
-    # Build conversation context from message history
-    # Format: "Previous context:\nUser: ...\nAssistant: ...\n\nCurrent question: ..."
-    if len(request.messages) > 1:
-        # Multi-turn conversation - include history for context
-        context_parts = ["Here's our conversation so far:"]
-        for msg in request.messages[:-1]:
-            role = "User" if msg.role == "user" else "Assistant"
-            context_parts.append(f"{role}: {msg.content}")
-        context_parts.append(f"\nCurrent question: {request.messages[-1].content}")
-        user_message = "\n".join(context_parts)
-    else:
-        # Single message
-        user_message = request.messages[-1].content
-
-    # Run agent
-    try:
-        result = state.agent.run(user_message, session_id=session_id)
-        assistant_response = result.output
-
-        # Track any new proposals for this session
-        current_proposals = set(state.agent.pending_proposals.keys())
-        session_proposals = set(state.session_proposals.get(session_id, []))
-        new_proposals = current_proposals - session_proposals
-
-        if new_proposals:
-            state.session_proposals[session_id] = list(current_proposals)
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
-
-    # Build response
-    return ChatCompletionResponse(
-        id=f"chatcmpl-{session_id}-{int(datetime.now().timestamp())}",
-        created=int(datetime.now().timestamp()),
-        model=request.model,
-        choices=[
-            ChatCompletionChoice(
-                index=0,
-                message=ChatMessage(role="assistant", content=assistant_response),
-                finish_reason="stop",
-            )
-        ],
-        usage=ChatCompletionUsage(
-            prompt_tokens=len(user_message.split()),  # Rough estimate
-            completion_tokens=len(assistant_response.split()),
-            total_tokens=len(user_message.split()) + len(assistant_response.split()),
+    if request.model == MEMORY_CHAT_MODEL_ID:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Model '{MEMORY_CHAT_MODEL_ID}' is temporarily disabled. "
+                f"Use '{RULES_CHAT_MODEL_ID}' instead."
+            ),
+        )
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Unsupported model '{request.model}'. "
+            f"Available model: {RULES_CHAT_MODEL_ID}"
         ),
     )
 
@@ -868,10 +1315,11 @@ async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResp
 async def pilot_rules_ruling(request: RulesRulingRequest) -> RulesRulingResult:
     """Return one structured ruling from the live SETI pilot graph."""
 
-    if state.rules_ruling_engine is None:
-        raise HTTPException(status_code=503, detail="Rules ruling engine not initialized")
     try:
-        return state.rules_ruling_engine.answer(request)
+        _inspection, result, _adjudication_outcome = await _answer_rules_request(request)
+        return result
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Rules ruling error: {exc}") from exc
 

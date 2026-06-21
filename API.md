@@ -2,7 +2,8 @@
 
 This document describes the current implemented API behavior.
 
-The API is still a memory-oriented interface over the Vector Graph Memory substrate. It is not yet a dedicated rules-lawyer API, even though the repository roadmap now includes that direction.
+The API is still built on the Vector Graph Memory substrate, but it now includes
+a narrow live `SETI` rules-lawyer pilot.
 
 Current authoritative package version:
 
@@ -13,6 +14,7 @@ Current authoritative package version:
 The current API provides:
 
 - an OpenAI-compatible chat interface
+- a live `SETI` pilot ruling path backed by retrieval, graph expansion, and the `RulesRulingResult` response schema
 - memory proposal and confirmation endpoints
 - audit-log access
 - optional DSPy-backed grounded answer synthesis behind feature flags
@@ -20,9 +22,9 @@ The current API provides:
 
 The API does not yet provide:
 
-- a formal rules-lawyer response schema
-- game-specific ruling endpoints
-- a productionized `SETI` adjudication path
+- a productionized rules-lawyer workflow beyond the bounded `SETI` pilot
+- broad game coverage outside the imported pilot slices
+- human review or release controls for accepted rulings
 
 ## Quick Start
 
@@ -33,7 +35,7 @@ Run the default stack with Docker Compose:
 ```bash
 # 1. Configure environment
 cp .env.example .env
-# Edit .env and set OPENAI_API_KEY
+# Edit .env for either OpenAI or external Ollama provider settings
 
 # 2. Start all services
 docker compose up -d
@@ -74,14 +76,24 @@ docker compose up -d qdrant janusgraph
 # 4. Initialize JanusGraph schema once
 uv run python scripts/init_janusgraph_schema.py
 
-# 5. Export OPENAI_API_KEY in your shell
+# 5. Export provider settings in your shell
 export OPENAI_API_KEY=sk-...
 
 # 6. Start API locally
 ./start_api.sh
 ```
 
-Note: `start_api.sh` currently checks `OPENAI_API_KEY` from the shell environment and does not source `.env`.
+For an external Ollama service, export the provider and endpoint instead:
+
+```bash
+export LLM_PROVIDER=ollama
+export EMBEDDING_PROVIDER=ollama
+export OLLAMA_BASE_URL=https://ollama.example.com/v1
+export OLLAMA_CHAT_MODEL=llama3.1:8b
+export OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+```
+
+Note: `start_api.sh` checks exported shell variables and does not source `.env`.
 
 ## Open WebUI Integration
 
@@ -93,18 +105,14 @@ Note: `start_api.sh` currently checks `OPENAI_API_KEY` from the shell environmen
    - name: `Vector Graph Memory`
    - base URL: `http://localhost:8052/vgm-api/v1`
    - API key: any value for the current default setup
-4. Save and select the `vector-graph-memory` model.
+4. Save and select the exposed model:
+   - `seti-rules-lawyer` for the live `SETI` pilot ruling path
 
 ### Usage
 
-Through Open WebUI, the current agent can:
+Through Open WebUI, the currently exposed chat path is the live `SETI` pilot ruling engine. The legacy `vector-graph-memory` chat model is temporarily disabled at the OpenAI-compatible API surface so the UI cannot accidentally route into the memory-oriented interface during rules-lawyer testing.
 
-- search memory for relevant context
-- answer with either the baseline path or feature-flagged DSPy path
-- propose storing information in memory
-- record memory actions in the audit log
-
-It is still a memory-oriented operator experience, not yet a game-ruling experience.
+When `seti-rules-lawyer` is selected, Open WebUI routes the latest user message through retrieval plus graph expansion, asks the configured PydanticAI chat model for a `RulesRulingResult`, and renders that ruling with the streamed Thinking trace in the standard chat surface. The legacy adjudication draft/screener path is present but disabled by default.
 
 ## DSPy Grounded Synthesis Status
 
@@ -124,7 +132,7 @@ Important scope note:
 - it uses the local `SETI` rules-reference eval suite as an optimization target
 - it does not by itself mean the repository already exposes a complete rules-lawyer API
 
-See [dspy-rag-implementation.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/dspy-rag-implementation.md) for the staged implementation plan.
+See [dspy-rag-implementation.md](docs/plans/dspy-rag-implementation.md) for the staged implementation plan.
 
 ## API Endpoints
 
@@ -132,15 +140,28 @@ See [dspy-rag-implementation.md](/home/jcherry/Documents/storage/git/vector-grap
 
 #### `POST /v1/chat/completions`
 
-Standard OpenAI chat completions endpoint.
+Standard OpenAI chat completions endpoint. The selected `model` determines which backend handles the request:
+
+- `seti-rules-lawyer`: live `SETI` pilot ruling path using retrieved graph evidence plus the `RulesRulingResult` schema
+- `vector-graph-memory`: currently rejected as temporarily disabled
+
+For `seti-rules-lawyer`, `stream: true` returns OpenAI-style SSE chunks for Open WebUI compatibility. The streamed output begins with a concise `<think>...</think>` diagnostic summary before the visible answer text:
+
+- `seti-rules-lawyer` shows route, seed origin, premise-screen results for invalid scenarios, inferred question issue, retrieval counts, candidate diagnostics, authority selection, verifier output, abstain details, and the per-request trace file path for deeper inspection.
+- If the configured model returns thinking through PydanticAI or emits complete `<think>...</think>` blocks, the API keeps that thinking out of the visible answer and appends it under `Model thinking:` below the diagnostic trace inside the same Thinking section.
+
+The ruling or answer is still computed before streaming begins, so this improves inspection UX rather than first-token latency. Detailed per-request traces are written under `API_TRACE_LOG_PATH` (default: `./logs/api`) as one JSON file per request, partitioned by date, for example `./logs/api/requests/2026-05-01/<request-id>.json`.
 
 Request:
 
 ```json
 {
-  "model": "vector-graph-memory",
+  "model": "seti-rules-lawyer",
   "messages": [
-    {"role": "user", "content": "What do you remember about my job search?"}
+    {
+      "role": "user",
+      "content": "If another player already has an orbiter there, do I still get the cheaper landing cost?"
+    }
   ],
   "user": "optional-session-id"
 }
@@ -153,13 +174,13 @@ Response:
   "id": "chatcmpl-...",
   "object": "chat.completion",
   "created": 1234567890,
-  "model": "vector-graph-memory",
+  "model": "seti-rules-lawyer",
   "choices": [
     {
       "index": 0,
       "message": {
         "role": "assistant",
-        "content": "Based on my memory, you applied to..."
+        "content": "Yes. The FAQ says the discount applies if any orbiter is already at the planet, including an opponent's orbiter.\n\nPrimary authority: Core Rulebook, Land on Planet or Moon (p. 12)"
       },
       "finish_reason": "stop"
     }
@@ -183,7 +204,7 @@ Response:
   "object": "list",
   "data": [
     {
-      "id": "vector-graph-memory",
+      "id": "seti-rules-lawyer",
       "object": "model",
       "created": 1234567890,
       "owned_by": "vector-graph-memory"
@@ -237,7 +258,14 @@ Key settings:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `LLM_PROVIDER` | Runtime chat/model provider: `openai` or external OpenAI-compatible `ollama` | `openai` |
 | `LLM_MODEL` | PydanticAI model string | `openai:gpt-4o-mini` |
+| `EMBEDDING_PROVIDER` | Embedding provider. If unset, follows `LLM_PROVIDER` | unset |
+| `EMBEDDING_MODEL` | Embedding model for OpenAI-backed embeddings | `text-embedding-3-small` |
+| `OLLAMA_BASE_URL` | External Ollama OpenAI-compatible `/v1` base URL | unset |
+| `OLLAMA_CHAT_MODEL` | External Ollama chat model used when `LLM_PROVIDER=ollama` | `llama3.1:8b` |
+| `OLLAMA_EMBEDDING_MODEL` | External Ollama embedding model used when `EMBEDDING_PROVIDER=ollama` | `nomic-embed-text` |
+| `OLLAMA_API_KEY` | Optional API key for the external Ollama domain | unset |
 | `PROJECT_ID` | Memory namespace | `default` |
 | `MEMORY_USE_CASE` | Use case description | `General purpose memory` |
 | `TRIGGER_MODE` | When to check memory | `ai_determined` |
@@ -290,16 +318,17 @@ The API server currently:
 1. Initializes Qdrant, JanusGraph, and the `MemoryAgent`.
 2. Receives OpenAI-compatible chat requests.
 3. Uses the `user` field as the session identifier.
-4. Runs either the baseline answer path or the feature-flagged DSPy synthesis path.
-5. Exposes proposal, confirmation, and audit endpoints for memory control.
+4. Rejects `vector-graph-memory` chat requests while that legacy interface is temporarily disabled.
+5. Routes `seti-rules-lawyer` requests through live retrieval, graph expansion, and `RulesRulingResult` response generation.
+6. Exposes proposal, confirmation, and audit endpoints for memory control.
 
 ## Known Gaps
 
 - MongoDB audit logging is intended but not fully wired into API startup configuration.
-- `start_api.sh` requires `OPENAI_API_KEY` to be exported in the current shell and does not source `.env`.
+- `start_api.sh` checks exported provider variables in the current shell and does not source `.env`.
 - JanusGraph schema initialization is manual for local library and local API development.
 - Session-scoped audit history does not currently apply the documented `limit` parameter.
-- The current API contract is not yet specialized for rules-lawyer output.
+- The OpenAI-compatible `seti-rules-lawyer` endpoint renders a `RulesRulingResult` into chat text; use `POST /rules/pilot/ruling` when the same typed ruling contract is needed directly.
 
 ## Development
 
@@ -319,8 +348,8 @@ curl http://localhost:8000/
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "vector-graph-memory",
-    "messages": [{"role": "user", "content": "Hello!"}],
+    "model": "seti-rules-lawyer",
+    "messages": [{"role": "user", "content": "If another player already has an orbiter there, do I still get the cheaper landing cost?"}],
     "user": "test-session"
   }'
 

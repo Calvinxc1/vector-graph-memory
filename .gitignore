@@ -211,3 +211,4 @@ __marimo__/
 uv.lock
 .vgm/
 tests/fixtures/rag_eval/source_documents/
+logs/

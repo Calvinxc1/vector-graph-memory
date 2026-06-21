@@ -280,10 +280,12 @@ def test_live_pilot_ruling_inspection_separates_seed_inference_and_case_selectio
     )
 
     assert inspection.seed_inference.selected_seed_id == "seti_free_action_authority_seed_v1"
+    assert inspection.issue_inference.issue_type == "scan_interrupt_timing"
     assert inspection.seed_inference.selected_score >= 0.14
     assert inspection.selected_seed_id == "seti_free_action_authority_seed_v1"
     assert inspection.selected_case is not None
     assert inspection.selected_case.question_id == "seti-rules-021-scan-interrupt-publicity"
+    assert inspection.selected_case.issue_type == "scan_interrupt_timing"
     assert inspection.selected_case.question_score >= 0.14
     assert inspection.selected_case.evidence_score >= 2
     assert inspection.candidate_cases
@@ -315,3 +317,74 @@ def test_live_pilot_ruling_engine_abstains_for_untracked_question():
 
     assert result.abstain is True
     assert result.backend == "live-pilot"
+
+
+def test_live_pilot_ruling_engine_abstains_when_issue_type_mismatches_top_case():
+    engine = LivePilotRulingEngine(FakeRuleStore(), project_id="seti_rules_lawyer")
+
+    inspection = engine.inspect_request(
+        RulesRulingRequest(
+            question=(
+                "If I land a probe on a planet, then later an orbiter arrives, "
+                "do I get the discount retroactively applied to my landing cost?"
+            ),
+        )
+    )
+    result = engine.answer(
+        RulesRulingRequest(
+            question=(
+                "If I land a probe on a planet, then later an orbiter arrives, "
+                "do I get the discount retroactively applied to my landing cost?"
+            ),
+        )
+    )
+
+    assert inspection.issue_inference.issue_type == "retroactive_state_change"
+    assert inspection.candidate_cases
+    assert inspection.selected_case is None
+    assert inspection.selected_case_issue_match is False
+    assert inspection.selected_case_issue_mismatch_reason is not None
+    assert "retroactive_state_change" in inspection.selected_case_issue_mismatch_reason
+    assert result.abstain is True
+    assert result.question_id == "unsupported_question"
+    assert result.uncertainty is not None
+    assert "retroactive_state_change" in result.uncertainty
+
+
+def test_live_pilot_ruling_engine_abstains_for_invalid_orbiter_on_moon_premise():
+    engine = LivePilotRulingEngine(FakeRuleStore(), project_id="seti_rules_lawyer")
+
+    question = "If an orbiter is on the moon instead of the planet, does that still reduce the moon landing cost?"
+    inspection = engine.inspect_request(RulesRulingRequest(question=question))
+    result = engine.answer(RulesRulingRequest(question=question))
+
+    assert inspection.premise_screen.status == "invalid_orbiter_location"
+    assert inspection.premise_screen.reason is not None
+    assert "orbiter can be on a moon" in inspection.premise_screen.reason
+    assert inspection.selected_case is None
+    assert inspection.candidate_cases == []
+    assert result.abstain is True
+    assert result.question_id == "unsupported_question"
+    assert result.uncertainty is not None
+    assert "orbiter can be on a moon" in result.uncertainty
+
+
+def test_live_pilot_ruling_engine_abstains_for_invalid_turn_sequence_premise():
+    engine = LivePilotRulingEngine(FakeRuleStore(), project_id="seti_rules_lawyer")
+
+    question = (
+        "If I declare the landing before any orbiter is present, but an orbiter arrives before I pay "
+        "the landing cost, do I get the discount?"
+    )
+    inspection = engine.inspect_request(RulesRulingRequest(question=question))
+    result = engine.answer(RulesRulingRequest(question=question))
+
+    assert inspection.premise_screen.status == "invalid_turn_sequence"
+    assert inspection.premise_screen.reason is not None
+    assert "treat turns and action resolution sequentially" in inspection.premise_screen.reason
+    assert inspection.selected_case is None
+    assert inspection.candidate_cases == []
+    assert result.abstain is True
+    assert result.question_id == "unsupported_question"
+    assert result.uncertainty is not None
+    assert "treat turns and action resolution sequentially" in result.uncertainty

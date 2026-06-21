@@ -10,8 +10,8 @@ Status:
 
 Related planning docs:
 
-- [seti-landing-orbiter-subsystem-brief.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/seti-landing-orbiter-subsystem-brief.md)
-- [seti-pilot-next-steps.md](/home/jcherry/Documents/storage/git/vector-graph-memory/docs/plans/seti-pilot-next-steps.md)
+- [seti-landing-orbiter-subsystem-brief.md](seti-landing-orbiter-subsystem-brief.md)
+- [seti-pilot-next-steps.md](seti-pilot-next-steps.md)
 
 ## Purpose
 

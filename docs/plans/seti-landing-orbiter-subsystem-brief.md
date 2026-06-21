@@ -55,8 +55,8 @@ Supporting core-rule passages:
 
 Relevant source locations already visible in the local extracted texts:
 
-- [seti-faq.txt](/home/jcherry/Documents/storage/git/vector-graph-memory/tests/fixtures/rag_eval/source_documents/extracted/seti-faq.txt#L76)
-- [seti-rules-en.txt](/home/jcherry/Documents/storage/git/vector-graph-memory/tests/fixtures/rag_eval/source_documents/extracted/seti-rules-en.txt#L444)
+- [seti-faq.txt](../../tests/fixtures/rag_eval/source_documents/extracted/seti-faq.txt#L76)
+- [seti-rules-en.txt](../../tests/fixtures/rag_eval/source_documents/extracted/seti-rules-en.txt#L444)
 
 ## Authority Model For This Subsystem
 

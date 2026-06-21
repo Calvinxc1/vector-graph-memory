@@ -31,10 +31,11 @@ from uuid import NAMESPACE_URL, uuid5
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from gremlin_python.driver import client as gremlin_client  # type: ignore[import-untyped]
-from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
 from qdrant_client import QdrantClient
 
 from vgm.VectorGraphStore import VectorGraphStore
+from vgm.model_provider import build_embedding_model_from_env, embedding_model_name_from_env
+from vgm.rules import audit_rule_extraction_bundle, load_bundle_from_seed_records
 from vgm.schemas import EdgeMetadata, NodeMetadata
 
 
@@ -152,6 +153,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Validate and report what would be imported without writing anything.",
     )
+    parser.add_argument(
+        "--skip-audit",
+        action="store_true",
+        help="Skip the pre-import rule-load audit.",
+    )
+    parser.add_argument(
+        "--audit-report",
+        type=Path,
+        help="Optional path to write the pre-import audit report JSON.",
+    )
     return parser.parse_args()
 
 
@@ -185,11 +196,24 @@ def main() -> int:
             f"Manifest edge_count={expected_edge_count}, but loaded {len(edges)} edges"
         )
 
+    if not args.skip_audit:
+        bundle = load_bundle_from_seed_records(manifest, nodes, edges)
+        audit_report = audit_rule_extraction_bundle(bundle)
+        if args.audit_report is not None:
+            args.audit_report.parent.mkdir(parents=True, exist_ok=True)
+            args.audit_report.write_text(audit_report.model_dump_json(indent=2), encoding="utf-8")
+        if not audit_report.passes_required_gates:
+            raise ValueError(
+                "Rule-load audit failed; refusing to import seed fixture. "
+                f"errors={audit_report.error_count} warnings={audit_report.warning_count}. "
+                "Use --skip-audit only for local debugging."
+            )
+
     qdrant_host = os.getenv("QDRANT_HOST", "localhost")
     qdrant_port = int(os.getenv("QDRANT_HTTP_PORT", "8111"))
     janusgraph_host = os.getenv("JANUSGRAPH_HOST", "localhost")
     janusgraph_port = int(os.getenv("JANUSGRAPH_PORT", "8182"))
-    embedding_model_name = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+    embedding_model_name = embedding_model_name_from_env()
 
     if args.dry_run:
         print(f"Dry run for seed: {manifest['seed_id']}")
@@ -209,7 +233,7 @@ def main() -> int:
     janus = gremlin_client.Client(
         f"ws://{janusgraph_host}:{janusgraph_port}/gremlin", "g"
     )
-    embedding_model = OpenAIEmbeddingModel(embedding_model_name)
+    embedding_model = build_embedding_model_from_env(embedding_model_name)
     store = VectorGraphStore(
         qdrant_client=qdrant,
         janus_client=janus,

@@ -14,6 +14,7 @@ from vgm.schemas import SimilarNode
 
 
 FIXTURE_SUITE = Path("tests/fixtures/rag_eval/seti_rules_ruling_eval_v1.jsonl")
+HELDOUT_FIXTURE_SUITE = Path("tests/fixtures/rag_eval/seti_rules_ruling_eval_heldout_v1.jsonl")
 
 
 class FakeRuleStore:
@@ -107,6 +108,26 @@ def test_load_pilot_ruling_eval_cases_reads_tracked_suite():
     assert cases[-1].expected_abstain is True
 
 
+def test_load_pilot_ruling_eval_cases_reads_heldout_suite_metadata():
+    cases = load_pilot_ruling_eval_cases(HELDOUT_FIXTURE_SUITE)
+
+    assert len(cases) == 34
+    assert cases[0].suite_id == "seti_rules_ruling_eval_heldout_v1"
+    assert sum(case.bucket == "seen_regression" for case in cases) == 6
+    assert sum(case.bucket == "heldout_supported" for case in cases) == 12
+    assert sum(case.bucket == "near_miss_abstain" for case in cases) == 10
+    assert sum(case.bucket == "out_of_scope_abstain" for case in cases) == 6
+    assert sum(case.manual_candidate for case in cases) == 11
+    assert sum(case.split == "dev" for case in cases) == 11
+    assert sum(case.split == "validation" for case in cases) == 17
+    assert sum(case.split == "regression" for case in cases) == 6
+    assert all(
+        case.expected_abstain_kind in {"near_miss", "out_of_scope"}
+        for case in cases
+        if case.expected_abstain
+    )
+
+
 def test_pilot_ruling_evaluator_scores_live_engine_by_component():
     evaluator = PilotRulingEvaluator.from_suite(FIXTURE_SUITE)
     engine = LivePilotRulingEngine(FakeRuleStore(), project_id="seti_rules_lawyer")
@@ -124,4 +145,8 @@ def test_pilot_ruling_evaluator_scores_live_engine_by_component():
     assert report.average_primary_citation == 1.0
     assert report.average_modifier_selection == 1.0
     assert report.average_precedence_assembly == 1.0
+    assert report.average_abstention == 1.0
+    assert report.acceptance.hard_gate_passed is True
+    assert report.acceptance.suite_thresholds_passed is True
+    assert report.acceptance.pilot_ready is True
     assert all(case.total_score == 1.0 for case in report.cases)

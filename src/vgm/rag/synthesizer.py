@@ -4,17 +4,17 @@ from typing import Any, Optional
 
 import dspy
 
+from ..model_provider import (
+    dspy_api_base_from_env,
+    dspy_api_key_from_env,
+    dspy_model_name_for_provider,
+)
 from .models import RagContext, RagSynthesisResult
 
 
 def normalize_dspy_model_name(model_name: str) -> str:
     """Translate provider:model strings into DSPy provider/model names."""
-    if "/" in model_name:
-        return model_name
-    if ":" in model_name:
-        provider, model = model_name.split(":", 1)
-        return f"{provider}/{model}"
-    return model_name
+    return dspy_model_name_for_provider(model_name)
 
 
 def build_dspy_lm(
@@ -28,6 +28,8 @@ def build_dspy_lm(
     """Create a DSPy LM using the current repo model configuration."""
     model_name = model_name_override or normalize_dspy_model_name(llm_model)
     kwargs: dict[str, Any] = {}
+    api_key = dspy_api_key_from_env(api_key)
+    api_base = dspy_api_base_from_env(api_base)
     if api_key is not None:
         kwargs["api_key"] = api_key
     if api_base is not None:

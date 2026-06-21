@@ -42,11 +42,26 @@ from .extraction import (
     load_reference_bundle_from_seed_fixture,
     normalize_candidate_bundle,
 )
+from .load_audit import (
+    RuleLoadAuditFinding,
+    RuleLoadAuditReport,
+    RuleLoadGraphSummary,
+    RuleLoadSourceCoverageSummary,
+    audit_rule_extraction_bundle,
+)
+from .adjudication import (
+    LlmRulesAdjudicator,
+    RulesAdjudicationDraft,
+    RulesAdjudicationOutcome,
+    RulesAdjudicationPrecedenceDraft,
+    verify_adjudication_draft,
+)
 from .rulings import (
     DeterministicPilotRulingEngine,
     LivePilotRulingEngine,
     LivePilotRulingInspection,
     PilotCaseMatch,
+    PilotIssueInference,
     PilotSeedInference,
     PilotSeedScore,
     PrecedenceEntry,
@@ -61,11 +76,14 @@ from .rulings import (
     load_seti_pilot_bundles,
 )
 from .ruling_eval import (
+    PilotRulingAcceptanceSummary,
+    PilotRulingAcceptanceThresholds,
     PilotRulingEvalCase,
     PilotRulingEvalCaseReport,
     PilotRulingEvalComponentScores,
     PilotRulingEvalReport,
     PilotRulingEvaluator,
+    PilotRulingThresholdResults,
     load_pilot_ruling_eval_cases,
 )
 
@@ -106,10 +124,21 @@ __all__ = [
     "compare_rule_extractions",
     "load_reference_bundle_from_seed_fixture",
     "normalize_candidate_bundle",
+    "RuleLoadAuditFinding",
+    "RuleLoadAuditReport",
+    "RuleLoadGraphSummary",
+    "RuleLoadSourceCoverageSummary",
+    "audit_rule_extraction_bundle",
+    "LlmRulesAdjudicator",
+    "RulesAdjudicationDraft",
+    "RulesAdjudicationOutcome",
+    "RulesAdjudicationPrecedenceDraft",
+    "verify_adjudication_draft",
     "DeterministicPilotRulingEngine",
     "LivePilotRulingEngine",
     "LivePilotRulingInspection",
     "PilotCaseMatch",
+    "PilotIssueInference",
     "PilotSeedInference",
     "PilotSeedScore",
     "PrecedenceEntry",
@@ -127,5 +156,8 @@ __all__ = [
     "PilotRulingEvalComponentScores",
     "PilotRulingEvalReport",
     "PilotRulingEvaluator",
+    "PilotRulingAcceptanceSummary",
+    "PilotRulingAcceptanceThresholds",
+    "PilotRulingThresholdResults",
     "load_pilot_ruling_eval_cases",
 ]

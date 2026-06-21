@@ -1,5 +1,7 @@
 """Tests for the pilot rules API surfaces."""
 
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import asyncio

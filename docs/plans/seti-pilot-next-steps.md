@@ -209,6 +209,7 @@ Status:
 
 - Partially completed
 - extraction comparison and DSPy-oriented evaluation seams exist, but the broader acceptance rubric is still light and seed-centric
+- an initial live-ruling acceptance rubric is now codified around the typed pilot eval components in `src/vgm/rules/ruling_eval.py`
 
 Action:
 
@@ -225,6 +226,49 @@ The rubric should score at least:
 Deliverable:
 
 - a pilot comparison rubric with pass or fail thresholds for each category
+
+Initial v1 live-ruling acceptance rubric for the bounded `SETI` pilot:
+
+- score components separately for:
+  - retrieval nodes
+  - expanded evidence
+  - seed inference
+  - case selection
+  - primary citation
+  - modifier selection
+  - precedence assembly
+  - abstention
+- treat `retrieval_nodes` as a diagnostic signal, not a blocking gate for v1
+- use `expanded_evidence` as the blocking retrieval-quality measure because it better reflects whether the ruling path had the controlling material after graph expansion
+
+Case-level hard gates:
+
+- fail if the system answers when the case expected abstention
+- fail if the system abstains on a supported frozen pilot case
+- fail if the primary citation does not match the frozen expectation on a supported case
+- fail if the precedence order does not match the frozen expectation on a supported case
+
+Suite-level thresholds:
+
+- `expanded_evidence >= 0.90`
+- `seed_inference >= 0.95`
+- `case_selection >= 0.95`
+- `primary_citation = 1.00`
+- `modifier_selection >= 0.90`
+- `precedence_assembly >= 0.95`
+- `abstention = 1.00`
+
+Acceptance states:
+
+- `pilot_ready`: all hard gates pass and all suite thresholds pass
+- `usable_for_internal_tuning`: no hard-gate failures, but one or more suite thresholds miss
+- `exploratory_only`: any hard-gate failure
+
+Current deliberate limitation:
+
+- the live pilot eval currently does not score freeform ruling prose separately from structural correctness
+- for this bounded frozen pilot, correctness is accepted through case selection, citation choice, precedence assembly, and abstention behavior
+- before broader rollout beyond the frozen pilot cases, add a distinct final-ruling-text acceptance check
 
 ### Step 6: Define The Ruling Output Contract
 
@@ -267,6 +311,7 @@ Status:
 - a first live graph-backed ruling path now exists for the frozen pilot questions through Qdrant retrieval plus JanusGraph expansion
 - retrieval and ruling assembly are still tightly scoped to the frozen `SETI` pilot question set, not yet generalized beyond it
 - a typed live-ruling eval suite now exists for paraphrases, authority conflicts, and abstain behavior, with separate scoring for retrieval nodes, expanded evidence, seed inference, case selection, citation choice, modifier choice, and precedence assembly
+- the live-ruling evaluator now also scores abstention explicitly and produces a typed pilot-readiness decision from hard gates plus suite thresholds
 
 Action:
 
