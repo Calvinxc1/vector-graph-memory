@@ -210,3 +210,4 @@ __marimo__/
 ## Custom Ignores
 uv.lock
 .vgm/
+tests/fixtures/rag_eval/source_documents/
