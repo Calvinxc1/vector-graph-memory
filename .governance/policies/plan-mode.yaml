@@ -1,0 +1,10 @@
+id: plan_mode
+status: draft
+scope: coding_agents
+summary: Plan mode exit discipline before file modification.
+rules:
+  - In plan mode, do not modify files.
+  - Use an explicit exit step before making file modifications.
+  - The exit step must state that execution is beginning and identify the first write action.
+  - If plan mode status is ambiguous, remain read only and ask.
+

@@ -1,0 +1,19 @@
+id: gitflow
+status: draft
+scope: coding_agents
+summary: Branch roles, commit style, changelog discipline, and CI/CD trigger expectations.
+branch_roles:
+  trunk: Stable integration branch for ratified work.
+  feature: Isolated implementation branch for a scoped change.
+  release: Stabilization branch for a planned release when the project uses release branches.
+  hotfix: Urgent correction branch from the production baseline when the project uses hotfix branches.
+rules:
+  - Follow the repository's declared GitFlow model when one exists.
+  - If the repository has no declared model, ask before inventing branch semantics.
+  - Use conventional commits when committing is explicitly requested and the repository has no conflicting convention.
+  - Keep commits scoped to one coherent change.
+  - Update changelog material when the repository convention requires it or when user-facing release behavior changes.
+  - Do not manufacture changelog churn for internal-only or trivial changes.
+  - Treat CI as the validation gate for proposed integration.
+  - Treat CD triggers as externally consequential and confirm before taking an action that would trigger deployment.
+

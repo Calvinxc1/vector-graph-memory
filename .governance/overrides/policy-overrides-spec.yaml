@@ -1,0 +1,86 @@
+purpose: "Record material, temporary policy overrides and their restoration status."
+
+files:
+  log: ".governance/overrides/policy-overrides.yaml"
+  governance_readme: ".governance/README.md"
+  override_process: ".governance/processes/override-governance.yaml"
+
+entry_model:
+  collection_key: "overrides"
+  amendment_rule: "Amend the same case rather than layering overrides."
+  pattern_review_rule: "After restoration, check for materially similar prior overrides and surface patterns."
+
+material_override_definition:
+  summary: "Material overrides bypass meaningful safeguards, change normal review or execution expectations, affect persistent repository or workflow state, or matter during later policy review."
+  examples:
+    - "temporarily bypassing branch protection or required checks"
+    - "changing normal review expectations for a high-risk operation"
+    - "bypassing a workflow safeguard that requires later restoration"
+  non_examples:
+    - "minor wording differences in a proposal that do not change execution or review posture"
+    - "routine execution performed under normal policy without a bypass"
+
+required_fields:
+  - "id"
+  - "date"
+  - "operation"
+  - "policy_sections"
+  - "reason"
+  - "exception"
+  - "restoration_status"
+  - "notes"
+
+optional_fields:
+  - "branch"
+  - "issue"
+  - "declared_by"
+  - "scope"
+  - "materiality"
+  - "follow_up"
+
+field_definitions:
+  id: "Stable case identifier."
+  date: "Declared or amended date, YYYY-MM-DD."
+  operation: "Narrow supported operation."
+  policy_sections: "Policy sections bypassed."
+  reason: "Immediate rationale."
+  exception: "What was bypassed."
+  restoration_status: "Restoration state."
+  notes: "Freeform context."
+  branch: "Associated branch."
+  issue: "Associated Gitea issue."
+  declared_by: "Declaring actor."
+  scope: "Case scope."
+  materiality: "Optional materiality label."
+  follow_up: "Optional follow-up or policy-review trigger."
+
+restoration_status_values:
+  - "not_started"
+  - "in_progress"
+  - "restored"
+  - "blocked"
+
+entry_conventions:
+  - "An override remains active until the operation completes and restoration_status is restored."
+  - "If restoration cannot complete immediately, use blocked or in_progress and explain why in notes."
+  - "Do not use one override entry to supersede override-governance rules."
+  - "When an override changes mid-stream, amend the existing case."
+  - "After restoration, review materially similar prior overrides and surface policy patterns."
+
+example:
+  overrides:
+    - id: "2026-03-25-example-001"
+      date: "2026-03-25"
+      operation: "Temporarily disable branch protection to perform a one-off maintenance push, then restore protection."
+      policy_sections:
+        - ".governance/policies/risk-validation.yaml#risk_validation"
+        - ".governance/processes/override-governance.yaml#override_governance.rules"
+      branch: "feature/agents-user-involvement-guardrails"
+      declared_by: "developer"
+      scope: "single operation"
+      reason: "Exceptional maintenance could not proceed under normal protection."
+      exception: "Temporary bypass of branch protection for a single push."
+      materiality: "material"
+      restoration_status: "restored"
+      follow_up: "Review policy if similar maintenance bypasses recur."
+      notes: "Restoration completed. No recurring pattern identified."

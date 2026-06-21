@@ -1,0 +1,11 @@
+id: vector_graph_memory_llm_output_boundary
+status: local
+scope: vector_graph_memory
+summary: Programmatic LLM output must cross a typed PydanticAI boundary.
+rules:
+  - In this repository, any LLM output intended for programmatic use must be routed through PydanticAI with explicit typed models wherever practical.
+  - Treat freeform or weakly structured model output as a temporary debugging aid, not as an acceptable steady-state interface for application logic.
+  - When LLM output feeds parsing, graph construction, evaluation, workflow control, API contracts, configuration generation, or persistence, define a typed Pydantic model first and make that model the acceptance boundary.
+  - If a provider or framework requires an intermediate looser shape, normalize it immediately into the typed model before downstream validation or storage.
+  - Prefer alias handling, normalization, and retries at the PydanticAI boundary over ad hoc string parsing later in the pipeline.
+  - DSPy may optimize prompts or signatures around a task, but it must not replace this repository's typed PydanticAI acceptance boundary for LLM output that code consumes.

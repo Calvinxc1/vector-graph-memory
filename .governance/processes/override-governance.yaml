@@ -1,0 +1,16 @@
+id: override_governance
+status: draft
+when: [override]
+rules:
+  - Override-governance rules are non-overridable.
+  - Overrides are temporary.
+  - Overrides are valid only for one explicitly declared operation.
+  - Overrides may not override override-governance itself.
+  - Mid-stream changes amend the same override case instead of creating a new layered one.
+  - Overrides last only for the supported operation and cease when that operation completes.
+  - Any bypassed protection or state must be fully restored before the override is complete.
+  - If restoration cannot complete immediately, surface that explicitly as unresolved follow-up.
+  - Material overrides must be recorded in the override log using the override spec.
+  - After resolution, check for materially similar prior overrides and surface patterns for policy review.
+  - A recurring override pattern becomes an upward issue when it appears to generalize beyond the current branch.
+  - Override records document temporary exceptions and do not replace standing policy.
