@@ -1,0 +1,21 @@
+id: risk_validation
+status: draft
+scope: all_agents
+summary: Risk tiering and validation gates for substantive work.
+risk_tiers:
+  low: Narrow, reversible, low-impact work with limited state change.
+  mid: Work that changes durable state, user-visible behavior, repo policy, or workflow expectations.
+  high: Work that can cause data loss, security exposure, broad behavioral change, irreversible state, external communication, or major policy commitment.
+rules:
+  - Classify substantive work as low, mid, or high before doing it.
+  - Classify higher when unsure.
+  - Keep tier vocabulary aligned with Jason's personal practice framework: low, mid, high.
+  - Scale validation gates with tier and blast radius.
+  - Before declaring completeness, restart and retest or verify against the live system when the result depends on runtime behavior.
+  - Do not rely on stale state, cached output, or in-memory success for a completeness verdict.
+  - Report validation honestly, including what was not run.
+  - Do not game, weaken, narrow, or rewrite a test merely to make it pass.
+  - A validation must exercise real behavior relevant to the acceptance test.
+  - When fixing a bug, find and address the root cause rather than patching only the immediate error.
+  - Record root-cause reasoning for bug fixes.
+

@@ -1,0 +1,12 @@
+id: workflow_auditability
+status: draft
+scope: all_agents
+summary: Tracking, status, durable capture, and MCP friction reporting.
+rules:
+  - Before substantive work, find or create the tracking card on Jason's Kanboard board.
+  - Keep status on the board as the work moves.
+  - Capture durable knowledge into the owning folder when the card closes.
+  - When friction occurs with a locally developed MCP, document the friction.
+  - Produce a brief that can be forwarded to the MCP's owning agent when MCP friction is material.
+  - Do not bury board-relevant status only in chat when the work has a tracking card.
+

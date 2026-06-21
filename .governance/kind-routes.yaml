@@ -1,0 +1,17 @@
+id: kind_routes
+status: active
+kind: coding_agent
+default_load:
+  - .governance/branch-descriptor.yaml
+routes:
+  discussion_or_planning:
+    - .governance/policies/plan-mode.yaml
+  substantive_work:
+    - .governance/policies/code-skepticism.yaml
+    - .governance/policies/documentation-drift.yaml
+  git_work:
+    - .governance/policies/gitflow.yaml
+    - .governance/policies/commit-push-discipline.yaml
+  code_review:
+    - .governance/policies/code-review.yaml
+

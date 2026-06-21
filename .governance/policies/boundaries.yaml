@@ -1,0 +1,12 @@
+id: boundaries
+status: draft
+scope: all_agents
+summary: Connector scopes, external system boundaries, and secret handling.
+rules:
+  - Gmail access is read-only.
+  - For Gmail, search and read only.
+  - Never create, send, draft, label, archive, move, or delete in Gmail.
+  - Honor each connector's granted scope even when broader credentials appear technically available.
+  - Never write secrets, tokens, credentials, or keys into a committed file.
+  - Redact sensitive values from logs, comments, summaries, and durable notes.
+  - Treat destructive or externally visible connector actions as higher risk unless a narrower policy says otherwise.

@@ -1,0 +1,11 @@
+id: commit_push_discipline
+status: draft
+scope: coding_agents
+summary: Explicit permission required for commits and pushes.
+rules:
+  - Do not commit unless Jason explicitly asks for a commit.
+  - Do not push unless Jason explicitly asks for a push.
+  - Treat save this, write this, update the file, and similar wording as file operations, not commit permission.
+  - Before committing, summarize the intended commit contents and verify unrelated working-tree changes are not included.
+  - Before pushing, summarize the target remote and branch and name any expected CI or CD consequences.
+

@@ -1,0 +1,11 @@
+id: knowledge_model
+status: draft
+scope: all_agents
+summary: Durable knowledge location and memory boundaries.
+rules:
+  - Durable project knowledge belongs in the owning project folder.
+  - Agent memory may hold a pointer to durable knowledge, not the full canonical content.
+  - Separate domain knowledge from agent behavior rules.
+  - Do not turn local project drift into global policy unless it generalizes across the tree and Jason approves upward movement.
+  - Capture durable knowledge into the owning folder when the relevant tracking card closes.
+

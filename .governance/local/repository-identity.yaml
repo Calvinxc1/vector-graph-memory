@@ -1,0 +1,9 @@
+id: vector_graph_memory_repository_identity
+status: local
+scope: vector_graph_memory
+summary: Repository identity and AI usage posture.
+rules:
+  - This repository is intentionally maintained as a fully vibe-coded, AI-generated codebase under human direction.
+  - AI tooling may be used for implementation, refactoring, test authoring, documentation drafting/editing, GitHub Actions/workflow authoring and maintenance, and development planning/decision support.
+  - Human developers retain final responsibility for correctness, validation, release decisions, and policy interpretation.
+  - Permission to use AI broadly in this repository does not reduce validation requirements or imply acceptance of AI-generated output.

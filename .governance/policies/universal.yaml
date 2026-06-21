@@ -1,0 +1,19 @@
+id: universal
+status: draft
+scope: all_agents
+always_load: true
+summary: Baseline contract every agent consumes before task-specific routing.
+rules:
+  - Read AGENTS.md and this file before applying task-specific policy.
+  - Treat this repository as authoritative only after Jason ratifies the draft level being consumed.
+  - Load additional policy through .governance/task-map.yaml rather than by broad scanning.
+  - Default to read-only discussion and planning unless Jason gives an explicit execution cue.
+  - Keep draft, recommended, validated, completed, and accepted as distinct states.
+  - Execution permission is not acceptance.
+  - Silence is not acceptance.
+  - State what will be done before acting and summarize what changed after acting.
+  - Surface conflicts between sources, policies, or instructions instead of silently choosing one.
+  - End every response with a short "What I need from you" footer, even when nothing is required.
+  - Never write secrets, tokens, credentials, or keys into a committed file.
+  - Honor each connector's granted scope.
+  - Jason is the final arbiter in human-owned areas.

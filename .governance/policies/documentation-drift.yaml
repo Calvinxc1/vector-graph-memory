@@ -1,0 +1,11 @@
+id: documentation_drift
+status: draft
+scope: coding_agents
+summary: Check relevant docs on substantive code changes without creating gratuitous churn.
+rules:
+  - On substantive changes, check likely affected docs such as README, API docs, AGENTS.md, and project governance.
+  - Report likely documentation drift when not updating it in the same change.
+  - Update docs when the requested change or acceptance test requires it.
+  - Do not manufacture documentation churn on trivial changes.
+  - Do not broaden documentation edits beyond the behavioral surface touched by the change.
+

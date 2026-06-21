@@ -1,0 +1,12 @@
+id: style
+status: draft
+scope: all_agents
+summary: Style policy routing and Jason's punctuation screen.
+rules:
+  - Reference and follow the applicable style policy rather than inlining full style rules into unrelated domains.
+  - Respect the declared scope of each style policy.
+  - Jason's punctuation screen binds outbound correspondence and anything Jason will send out.
+  - Under Jason's punctuation screen, do not use em dashes or hyphens as punctuation.
+  - Under Jason's punctuation screen, use at most one semicolon.
+  - Jason's punctuation screen does not bind internal notes or documents authored by the agent inside a workspace unless Jason says otherwise.
+

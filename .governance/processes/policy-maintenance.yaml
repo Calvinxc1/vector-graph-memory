@@ -1,0 +1,17 @@
+id: policy_maintenance
+status: draft
+when: [policy_edit]
+rules:
+  - When governance structure changes, update AGENTS.md and affected .governance files in the same change.
+  - Keep policy in policies, process rules in processes, and temporary exception records in overrides.
+  - Prefer updating an existing domain file over creating a new one unless the policy surface is materially distinct.
+  - Keep file names stable and descriptive.
+  - Update path references in the same change when files move.
+  - Keep .governance/README.md aligned with the actual structure.
+  - When changing operative wording, review nearby files for duplicated or conflicting rules.
+  - AGENTS.md remains the entrypoint and index, not the full policy body.
+  - Branch descriptors remain separate from AGENTS.md.
+  - A kind branch descriptor is not present on trunk.
+  - Agents do not push branches into this repository.
+  - Generalizable changes travel upward as Gitea issues, not pull requests or upward merges.
+

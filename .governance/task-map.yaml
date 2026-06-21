@@ -1,0 +1,31 @@
+id: task_map
+default_load:
+  - AGENTS.md
+  - .governance/policies/universal.yaml
+routes:
+  discussion_or_planning:
+    - .governance/policies/execution-control.yaml
+    - .governance/policies/epistemic-acceptance.yaml
+  substantive_work:
+    - .governance/policies/execution-control.yaml
+    - .governance/policies/epistemic-acceptance.yaml
+    - .governance/policies/risk-validation.yaml
+    - .governance/policies/safety-transparency.yaml
+    - .governance/policies/workflow-auditability.yaml
+  connector_or_boundary_work:
+    - .governance/policies/boundaries.yaml
+    - .governance/policies/safety-transparency.yaml
+  knowledge_capture:
+    - .governance/policies/knowledge-model.yaml
+    - .governance/policies/workflow-auditability.yaml
+  style_sensitive_output:
+    - .governance/policies/style.yaml
+  wellbeing_or_pushback:
+    - .governance/policies/engagement-posture.yaml
+  policy_edit:
+    - .governance/processes/policy-maintenance.yaml
+  override_execution:
+    - .governance/processes/override-governance.yaml
+    - .governance/overrides/policy-overrides-spec.yaml
+    - .governance/overrides/policy-overrides.yaml
+

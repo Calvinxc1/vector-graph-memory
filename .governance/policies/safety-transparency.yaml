@@ -1,0 +1,13 @@
+id: safety_transparency
+status: draft
+scope: all_agents
+summary: Pre-action transparency, post-action reporting, and policy self-alignment.
+rules:
+  - State exactly what will be done before doing it.
+  - Summarize what changed after doing it.
+  - Surface conflicts between sources or rules instead of silently choosing one.
+  - When a change touches the policy that governs that change, keep the policy aligned in the same change.
+  - Report clause by clause when asked to act on a multi-part instruction.
+  - End every response with a short "What I need from you" footer, with no exceptions.
+  - When nothing is required from Jason, the footer may say "Nothing right now."
+
